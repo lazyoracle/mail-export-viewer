@@ -103,6 +103,28 @@ func TestStatusEndpoint(t *testing.T) {
 	}
 }
 
+func TestStatusInputWarnings(t *testing.T) {
+	root := "/data/exports"
+	var warns []string
+	for i := 0; i < 30; i++ {
+		warns = append(warns, fmt.Sprintf("skipped %s/messy/fake%d.pst: pst: not a PST file %s", root, i, strings.Repeat("y", 2000)))
+	}
+	s := &Server{root: root, inputWarnings: warns}
+	got := s.status(index.Progress{}, nil)
+	if got.InputWarningCount != 30 || len(got.InputWarnings) != maxStatusWarnings {
+		t.Fatalf("input warnings: count %d, listed %d", got.InputWarningCount, len(got.InputWarnings))
+	}
+	for i, w := range got.InputWarnings {
+		if len(w) > maxWarningLen+len("…") || strings.Contains(w, root) || !strings.HasPrefix(w, fmt.Sprintf("skipped messy/fake%d.pst: pst:", i)) {
+			t.Fatalf("input warning not bounded/scrubbed: %q", w)
+		}
+	}
+	// None: an empty list, never null.
+	if got := (&Server{root: root}).status(index.Progress{}, nil); got.InputWarnings == nil || got.InputWarningCount != 0 {
+		t.Fatalf("no input warnings: %+v", got)
+	}
+}
+
 func TestStatusMergeBoundsAndScrubs(t *testing.T) {
 	root := "/data/exports"
 	p := index.Progress{Running: true, Messages: 7, Warnings: 300, Sources: []index.SourceProgress{

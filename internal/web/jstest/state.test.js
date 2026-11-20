@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   emptyList, startLoading, applyPage, failPage,
-  clampIndex, progressInfo, shouldRefresh, sourceWarnings, visibleRows,
+  clampIndex, progressInfo, shouldRefresh, sourceWarnings, inputWarnings, visibleRows,
 } from '../static/js/state.js';
 import { ApiError, readJSON } from '../static/js/api.js';
 import { buildSrcdoc } from '../static/js/srcdoc.js';
@@ -89,6 +89,15 @@ test('sourceWarnings lists sources with warnings or errors, worst first', () => 
   assert.deepEqual(w.map((x) => x.name), ['f', 'w']);
   assert.equal(w[1].more, 29, 'count beyond the listed warnings');
   assert.deepEqual(sourceWarnings(null), []);
+});
+
+test('inputWarnings: skipped inputs, counted in the progress warnings', () => {
+  const s = { indexing: { running: false, finished: true, messages: 1, warnings: 2 }, sources: [src({ state: 'done' })],
+    inputWarnings: ['skipped files/fake.pst: pst: not a PST file'], inputWarningCount: 4 };
+  assert.deepEqual(inputWarnings(s), { warnings: ['skipped files/fake.pst: pst: not a PST file'], more: 3 });
+  assert.equal(progressInfo(s).warnings, 6, 'index warnings plus input warnings');
+  assert.deepEqual(inputWarnings(null), { warnings: [], more: 0 });
+  assert.deepEqual(inputWarnings({ sources: [] }), { warnings: [], more: 0 }, 'older servers omit the fields');
 });
 
 test('visibleRows keeps the first row of each conversation across pages', () => {

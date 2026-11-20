@@ -675,3 +675,34 @@ func TestRelativeInputNamesSources(t *testing.T) {
 	}
 	stop()
 }
+
+func TestSkippedInputReported(t *testing.T) {
+	parent := t.TempDir()
+	appleMailDir(t, parent, "corp")
+	fake := filepath.Join(parent, "corp", "files", "fake.pst")
+	os.MkdirAll(filepath.Dir(fake), 0o755)
+	os.WriteFile(fake, append([]byte("!BDN"), bytes.Repeat([]byte{0x5a}, 600)...), 0o644)
+	t.Chdir(parent)
+	base, stop, errb := startInProcess(t, hooks{}, "-no-open", "-addr", "127.0.0.1:0", "-cache-dir", t.TempDir(), "corp")
+	waitFinished(t, base)
+	var st struct {
+		InputWarnings     []string
+		InputWarningCount int
+	}
+	getJSON(t, base+"/api/status", &st)
+	if st.InputWarningCount != 1 || len(st.InputWarnings) != 1 || !strings.HasPrefix(st.InputWarnings[0], "skipped files/fake.pst: ") ||
+		strings.Contains(st.InputWarnings[0], parent) {
+		t.Fatalf("input warnings %d %q", st.InputWarningCount, st.InputWarnings)
+	}
+	stop()
+	// stderr names the file once, with the reason.
+	line := ""
+	for _, l := range strings.Split(errb.String(), "\n") {
+		if strings.Contains(l, "fake.pst") {
+			line = l
+		}
+	}
+	if line == "" || strings.Count(line, "fake.pst") != 1 || !strings.Contains(line, "warning: skipped ") {
+		t.Fatalf("stderr line %q in:\n%s", line, errb.String())
+	}
+}

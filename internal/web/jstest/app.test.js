@@ -52,7 +52,8 @@ const item = (id, extra = {}) => ({
 });
 const DATA = {
   '/api/status': { version: 't', includeDeleted: false, indexing: { running: false, finished: true, messages: 3, warnings: 0, error: '' },
-    sources: [{ id: 1, name: 'Inbox.mbox', kind: 'mbox', state: 'done', unit: 'bytes', done: 1, total: 1, messages: 3, count: 3, unread: 1, complete: true, warningCount: 0, warnings: [], error: '' }] },
+    sources: [{ id: 1, name: 'Inbox.mbox', kind: 'mbox', state: 'done', unit: 'bytes', done: 1, total: 1, messages: 3, count: 3, unread: 1, complete: true, warningCount: 0, warnings: [], error: '' }],
+    inputWarnings: [`skipped files/${evil}.pst: pst: not a PST file`], inputWarningCount: 1 },
   '/api/facets': {
     sources: [{ id: 1, name: 'Mail', kind: 'mbox', count: 3, unread: 1 }],
     folders: [{ name: 'Inbox', path: 'Inbox', count: 3, unread: 1, sources: [{ folderId: 10, sourceId: 1, sourceKind: 'mbox', source: 'Mail', count: 3, unread: 1 }], children: [
@@ -134,4 +135,13 @@ test('keyboard: ] steps to the next folder', async () => {
   fire('keydown', { key: ']', target: document.body });
   await tick(20);
   assert.match(location.hash, /fid=10/);
+});
+
+test('the status dialog lists skipped inputs as text', async () => {
+  assert.equal($('status-open').textContent, 'Index status: 1 warning');
+  $('status-open').dispatch('click');
+  await tick(5);
+  const items = $('status-body').querySelector('.status-inputs').querySelectorAll('li');
+  assert.deepEqual(items.map((li) => li.textContent), [`skipped files/${evil}.pst: pst: not a PST file`]);
+  assert.ok(!document.body.descendants().some((e) => e.tagName === 'IMG' && e.getAttribute('src') === 'x'), 'no element parsed from text');
 });

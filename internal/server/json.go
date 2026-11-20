@@ -106,6 +106,11 @@ type statusJSON struct {
 	IncludeDeleted bool           `json:"includeDeleted"`
 	Indexing       indexingJSON   `json:"indexing"`
 	Sources        []statusSource `json:"sources"`
+	// InputWarnings are problems with the input as a whole (entries
+	// discovery skipped, files that could not be opened); the first
+	// maxStatusWarnings of InputWarningCount.
+	InputWarnings     []string `json:"inputWarnings"`
+	InputWarningCount int      `json:"inputWarningCount"`
 }
 
 type indexingJSON struct {

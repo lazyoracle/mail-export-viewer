@@ -748,7 +748,9 @@ an issue on GitHub. **Never attach real mail or real exports**, not even
 - **Warnings in the banner or on stderr**: open **Details** in the indexing
   banner to see the warnings for each source. Corrupt messages, skipped
   calendar or contact items and unreadable folders are reported there, and
-  the rest is still indexed.
+  the rest is still indexed. Files that look like a supported format but
+  cannot be opened (for example a damaged PST header) are listed there
+  under **Input problems**.
 - **Thunderbird tags show as `$label1` or as raw keys**: `prefs.js` was not
   found above the folders. Point the viewer at the profile directory, or
   copy `prefs.js` along.

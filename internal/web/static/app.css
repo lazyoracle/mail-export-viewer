@@ -722,6 +722,8 @@ a.heat-c:hover, a.heat-c:focus-visible { outline: 2px solid var(--ink); outline-
 .status-warnings { display: grid; gap: 2px; font: 11.5px/1.45 var(--mono); color: var(--ink-2); max-height: 12rem; overflow-y: auto; }
 .status-warnings li { padding: 2px 0; border-top: 1px dashed var(--rule); overflow-wrap: anywhere; }
 .status-more { color: var(--muted); font-size: 12px; }
+.status-inputs { display: grid; gap: 4px; margin: 8px 0; }
+.status-inputs-title { font-size: 13px; font-weight: 600; margin: 0; }
 
 .toast {
   position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 60;

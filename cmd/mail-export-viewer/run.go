@@ -234,8 +234,9 @@ func cacheDirFor(cfg config) (string, error) {
 }
 
 // openSources discovers the input and opens every candidate; a candidate
-// that fails to open is reported and skipped.
-func openSources(input string, stderr io.Writer) ([]source.Source, error) {
+// that fails to open is skipped. Discovery warnings and skipped candidates
+// are printed and returned (for /api/status).
+func openSources(input string, stderr io.Writer) ([]source.Source, []string, error) {
 	unsupported := func() error {
 		return usageErrf("no supported mail found in %s\nsupported formats: %s (detected by content, not by extension)",
 			input, strings.Join(source.Formats(), ", "))
@@ -243,33 +244,43 @@ func openSources(input string, stderr io.Writer) ([]source.Source, error) {
 	d, err := source.Discover(input, source.Limits{})
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		return nil, usageErrf("%s does not exist", input)
+		return nil, nil, usageErrf("%s does not exist", input)
 	case errors.Is(err, os.ErrPermission):
-		return nil, usageErrf("cannot read %s: permission denied", input)
+		return nil, nil, usageErrf("cannot read %s: permission denied", input)
 	case errors.Is(err, source.ErrUnknownFormat):
-		return nil, unsupported()
+		return nil, nil, unsupported()
 	case err != nil:
-		return nil, usageErrf("cannot read %s: %v", input, err)
+		return nil, nil, usageErrf("cannot read %s: %v", input, err)
 	}
-	for _, w := range d.Warnings {
+	var warnings []string
+	warn := func(w string) {
+		warnings = append(warnings, w)
 		fmt.Fprintf(stderr, "%s: warning: %s\n", prog, clean(w))
 	}
+	for _, w := range d.Warnings {
+		warn(w)
+	}
 	if len(d.Candidates) == 0 {
-		return nil, unsupported()
+		return nil, nil, unsupported()
 	}
 	var srcs []source.Source
 	for _, c := range d.Candidates {
 		s, err := c.Open()
 		if err != nil {
-			fmt.Fprintf(stderr, "%s: warning: skipping %s: %v\n", prog, clean(c.Path), clean(err.Error()))
+			// Readers' errors usually name the file already.
+			msg := err.Error()
+			if strings.Contains(msg, c.Path) {
+				msg = strings.Replace(msg, c.Path+": ", "", 1)
+			}
+			warn(fmt.Sprintf("skipped %s: %s", c.Path, msg))
 			continue
 		}
 		srcs = append(srcs, s)
 	}
 	if len(srcs) == 0 {
-		return nil, usageErrf("none of the %d inputs found in %s could be opened", len(d.Candidates), input)
+		return nil, nil, usageErrf("none of the %d inputs found in %s could be opened", len(d.Candidates), input)
 	}
-	return srcs, nil
+	return srcs, warnings, nil
 }
 
 // serve opens the input, serves the UI and API at once, indexes in the
@@ -282,7 +293,7 @@ func serve(ctx context.Context, cfg config, stderr io.Writer, h hooks) error {
 	if err != nil {
 		return usageErrf("cannot resolve %s: %v", cfg.input, err)
 	}
-	srcs, err := openSources(root, stderr)
+	srcs, inputWarnings, err := openSources(root, stderr)
 	if err != nil {
 		return err
 	}
@@ -340,7 +351,7 @@ func serve(ctx context.Context, cfg config, stderr io.Writer, h hooks) error {
 		}
 	}
 	srv, err := server.New(server.Config{Store: st, Sources: srcs, Root: root, UI: web.FS(),
-		AllowedHosts: hosts, Version: version, IncludeDeleted: cfg.includeDeleted})
+		AllowedHosts: hosts, Version: version, InputWarnings: inputWarnings, IncludeDeleted: cfg.includeDeleted})
 	if err != nil {
 		return err
 	}

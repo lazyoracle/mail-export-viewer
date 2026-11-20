@@ -7,7 +7,7 @@ import { api, PAGE_SIZE } from './api.js';
 import { h, icon, clear, append, $ } from './dom.js';
 import { plural, compactCount } from './format.js';
 import {
-  emptyList, startLoading, applyPage, failPage, clampIndex, progressInfo, shouldRefresh, countText, sourceWarnings, visibleRows,
+  emptyList, startLoading, applyPage, failPage, clampIndex, progressInfo, shouldRefresh, countText, sourceWarnings, inputWarnings, visibleRows,
 } from './state.js';
 import { parseRoute, formatRoute, sameRoute, sameList, SORTS, apiSort } from './router.js';
 import {
@@ -1124,6 +1124,7 @@ function renderStatusDialog() {
   if (!s) { clear(el.statusBody).append(h('p', { class: 'muted', text: 'The index status is not known yet.' })); return; }
   const p = progressInfo(s);
   const warned = new Map(sourceWarnings(s).map((w) => [w.name, w]));
+  const skipped = inputWarnings(s);
   const summary = p.active
     ? `Indexing: ${p.finished} of ${plural(p.sources, 'source')} done, ${plural(p.messages, 'message')} read so far.`
     : `${plural(s.sources.reduce((n, x) => n + (x.count || 0), 0), 'message')} indexed from ${plural(s.sources.length, 'source')}.`;
@@ -1131,6 +1132,11 @@ function renderStatusDialog() {
     h('p', { class: 'status-summary', text: summary }),
     p.error ? h('p', { class: 'status-error', text: `Indexing stopped: ${p.error}` }) : null,
     h('p', { class: 'muted', text: `Version ${s.version || 'unknown'}. Deleted messages are ${s.includeDeleted ? 'shown' : 'hidden'} by default.` }),
+    skipped.warnings.length ? h('section', { class: 'status-inputs' },
+      h('h3', { class: 'status-inputs-title', text: 'Input problems' }),
+      h('ul', { class: 'status-warnings', attrs: { 'aria-label': 'Input problems' } },
+        skipped.warnings.map((t) => h('li', { text: t }))),
+      skipped.more ? h('p', { class: 'status-more', text: `${plural(skipped.more, 'more warning')} not listed.` }) : null) : null,
     h('ul', { class: 'status-sources' }, s.sources.map((x) => {
       const w = warned.get(x.name);
       const progress = x.state === 'indexing'

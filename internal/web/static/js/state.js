@@ -83,7 +83,7 @@ export function progressInfo(s) {
     fraction,
     // The run total can lag behind the per-source counts while a source is read.
     messages: Math.max(ix.messages || 0, sources.reduce((n, x) => n + (x.messages || 0), 0)),
-    warnings: ix.warnings || 0,
+    warnings: (ix.warnings || 0) + ((s && s.inputWarningCount) || 0),
     current: active && reading ? reading.name : '',
     error: ix.error || '',
     sources: sources.length,
@@ -112,6 +112,15 @@ export function sourceWarnings(s) {
       more: Math.max(0, (x.warningCount || 0) - (x.warnings || []).length),
     }))
     .sort((a, b) => (Boolean(b.error) - Boolean(a.error)) || (b.count - a.count));
+}
+
+/**
+ * Problems with the input as a whole (inputs skipped before indexing), for
+ * the warnings viewer. more: warnings not included in the list.
+ */
+export function inputWarnings(s) {
+  const warnings = (s && s.inputWarnings) || [];
+  return { warnings, more: Math.max(0, ((s && s.inputWarningCount) || 0) - warnings.length) };
 }
 
 /** The list header count: "3 messages", "12 results", "Many results", "Searching…". */

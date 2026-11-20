@@ -250,7 +250,14 @@ func (s *Server) status(p index.Progress, infos []index.SourceInfo) statusJSON {
 	}
 	out := statusJSON{Version: s.version, IncludeDeleted: s.includeDeleted, Sources: []statusSource{},
 		Indexing: indexingJSON{Running: p.Running, Finished: p.Finished, Messages: p.Messages, Warnings: p.Warnings,
-			Error: s.scrub(truncate(p.Err, maxWarningLen), paths...)}}
+			Error: s.scrub(truncate(p.Err, maxWarningLen), paths...)},
+		InputWarnings: []string{}, InputWarningCount: len(s.inputWarnings)}
+	for i, w := range s.inputWarnings {
+		if i == maxStatusWarnings {
+			break
+		}
+		out.InputWarnings = append(out.InputWarnings, s.scrub(truncate(w, maxWarningLen), paths...))
+	}
 	inRun := map[string]bool{}
 	add := func(src statusSource, si index.SourceInfo, ok bool) {
 		if ok {

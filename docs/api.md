@@ -114,7 +114,9 @@ served from the UI tree.
     {"id": 2, "name": "Inbox.mbox", "kind": "mbox", "state": "done", "unit": "bytes",
      "done": 2089, "total": 2089, "messages": 3, "count": 3, "unread": 0, "complete": true,
      "warningCount": 0, "warnings": [], "error": ""}
-  ]
+  ],
+  "inputWarnings": ["skipped files/fake.pst: pst: not a PST file (bad magic)"],
+  "inputWarningCount": 1
 }
 ```
 
@@ -162,6 +164,14 @@ sources the index still holds.
   20, each at most about 300 bytes. Paths in warnings are shortened to
   names.
 - `error`: why the source failed, if it did.
+
+`inputWarnings` are problems found before indexing: entries the directory
+walk skipped (limits, unreadable entries, links leaving the input) and
+files whose content looked like a supported format but could not be
+opened. Such files are not sources and are not indexed. The list holds at
+most the first 20 (each at most about 300 bytes, paths shortened);
+`inputWarningCount` counts all of them and is included in the warning
+count the UI shows.
 
 ### `GET /api/facets`
 

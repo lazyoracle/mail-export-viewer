@@ -42,6 +42,10 @@ type Config struct {
 	AllowedHosts []string
 	// Version is reported by /api/status.
 	Version string
+	// InputWarnings are reported by /api/status (bounded and scrubbed of
+	// paths): problems found before indexing, such as inputs that were
+	// skipped or could not be opened.
+	InputWarnings []string
 	// IncludeDeleted mirrors index.Options.IncludeDeleted (reported by
 	// /api/status so the UI can explain what it shows).
 	IncludeDeleted bool
@@ -62,6 +66,7 @@ type Server struct {
 	ui             fs.FS
 	hosts          hostSet
 	version        string
+	inputWarnings  []string
 	includeDeleted bool
 	log            *log.Logger
 	cidKey         []byte // per-process secret for cid URL tokens
@@ -94,7 +99,7 @@ func New(cfg Config) (*Server, error) {
 	}
 	s := &Server{
 		st: cfg.Store, srcs: map[string]source.Source{}, root: cfg.Root, ui: cfg.UI,
-		hosts: newHostSet(cfg.AllowedHosts), version: cfg.Version, includeDeleted: cfg.IncludeDeleted,
+		hosts: newHostSet(cfg.AllowedHosts), version: cfg.Version, inputWarnings: cfg.InputWarnings, includeDeleted: cfg.IncludeDeleted,
 		log: cfg.Logger, cidKey: key, inlinePart: cfg.inlinePart, inlineTotal: cfg.inlineTotal,
 		sem: newByteSem(loadBudget),
 	}
