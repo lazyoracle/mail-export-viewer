@@ -410,8 +410,7 @@ func (s *olm) Raw(loc source.Locator) ([]byte, error) {
 		return nil, tooLarge
 	}
 	used = int64(len(p.msg.Text)+len(p.msg.HTML)) + 1024
-	w := &limitWriter{max: maxMessageBytes, err: tooLarge}
-	err = mail.WriteEML(w, &p.msg, func(i int) ([]byte, error) {
+	raw, err := mail.EMLBytes(&p.msg, func(i int) ([]byte, error) {
 		remaining := (maxMessageBytes - used) / 4 * 3
 		if remaining < 0 {
 			return nil, tooLarge
@@ -419,28 +418,14 @@ func (s *olm) Raw(loc source.Locator) ([]byte, error) {
 		_, d, err := s.attData(loc.Name, p, i, remaining)
 		used += int64(len(d))/3*4 + 4
 		return d, err
-	})
+	}, maxMessageBytes, tooLarge)
 	if err != nil {
 		if errors.Is(err, source.ErrTooLarge) {
 			return nil, tooLarge
 		}
 		return nil, err
 	}
-	return w.b.Bytes(), nil
-}
-
-// limitWriter buffers up to max bytes, then fails with err.
-type limitWriter struct {
-	b   bytes.Buffer
-	max int64
-	err error
-}
-
-func (w *limitWriter) Write(p []byte) (int, error) {
-	if int64(w.b.Len())+int64(len(p)) > w.max {
-		return 0, w.err
-	}
-	return w.b.Write(p)
+	return raw, nil
 }
 
 func (s *olm) Attachment(loc source.Locator, index int) (mail.Attachment, []byte, error) {

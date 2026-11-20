@@ -810,28 +810,13 @@ func (s *store) attachment(id uint64, i int) (mail.Attachment, []byte, error) {
 // maxMessage is source.MaxMessageBytes (a variable for tests).
 var maxMessage int64 = source.MaxMessageBytes
 
-// limitWriter buffers a synthesised message and fails with ErrTooLarge
-// once it would exceed maxMessage, so huge messages are never built.
-type limitWriter struct{ buf bytes.Buffer }
-
-func (w *limitWriter) Write(p []byte) (int, error) {
-	if int64(w.buf.Len()+len(p)) > maxMessage {
-		return 0, fmt.Errorf("pst: synthesised message over %d bytes: %w", maxMessage, source.ErrTooLarge)
-	}
-	return w.buf.Write(p)
-}
-
-// writeEML synthesises m (whose attachments live in o) within maxMessage.
+// writeEML synthesises m (whose attachments live in o) within maxMessage,
+// failing with ErrTooLarge before a huge message is built.
 func (s *store) writeEML(o *obj, m *mail.Message, depth int) ([]byte, error) {
-	var w limitWriter
-	err := mail.WriteEML(&w, m, func(j int) ([]byte, error) {
+	return mail.EMLBytes(m, func(j int) ([]byte, error) {
 		_, d, err := s.attachmentData(o, j, depth+1)
 		return d, err
-	})
-	if err != nil {
-		return nil, err
-	}
-	return w.buf.Bytes(), nil
+	}, maxMessage, fmt.Errorf("pst: synthesised message over %d bytes: %w", maxMessage, source.ErrTooLarge))
 }
 
 func (s *store) attachmentData(o *obj, i, depth int) (mail.Attachment, []byte, error) {

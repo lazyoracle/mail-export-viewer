@@ -181,3 +181,26 @@ func TestWriteEMLFoldsLongPreservedFields(t *testing.T) {
 		t.Errorf("References = %d", len(got))
 	}
 }
+
+func TestEMLBytesLimit(t *testing.T) {
+	big := bytes.Repeat([]byte("z"), 3000)
+	m := &Message{Envelope: Envelope{Subject: "limit", From: Address{"", "a@example.com"}}, Text: "body\n",
+		Attachments: []Attachment{{Index: 0, Filename: "big.bin", ContentType: "application/octet-stream", Size: int64(len(big))}}}
+	var want bytes.Buffer
+	if err := WriteEML(&want, m, attData(big)); err != nil {
+		t.Fatal(err)
+	}
+	tooLarge := errors.New("too large")
+	got, err := EMLBytes(m, attData(big), int64(want.Len()), tooLarge)
+	// Same size (the MIME boundary is random) and the same message.
+	if err != nil || len(got) != want.Len() || Parse(got, time.Time{}).Attachments[0].Size != int64(len(big)) {
+		t.Fatalf("at the limit: %v, %d bytes, want %d", err, len(got), want.Len())
+	}
+	asked := 0
+	if _, err := EMLBytes(m, func(i int) ([]byte, error) { asked++; return big, nil }, 1000, tooLarge); !errors.Is(err, tooLarge) {
+		t.Fatalf("over the limit: %v", err)
+	}
+	if asked != 1 {
+		t.Fatalf("data asked %d times", asked)
+	}
+}

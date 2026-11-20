@@ -2,6 +2,7 @@ package mail
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
@@ -250,4 +251,28 @@ func writeAttachment(bw *bufio.Writer, a Attachment, d []byte) {
 		enc = enc[76:]
 	}
 	bw.WriteString(enc)
+}
+
+// EMLBytes returns WriteEML's output, failing with tooLarge as soon as it
+// would exceed max bytes, so an oversized message is never built in full.
+func EMLBytes(m *Message, data func(index int) ([]byte, error), max int64, tooLarge error) ([]byte, error) {
+	w := &limitWriter{max: max, err: tooLarge}
+	if err := WriteEML(w, m, data); err != nil {
+		return nil, err
+	}
+	return w.b.Bytes(), nil
+}
+
+// limitWriter buffers up to max bytes, then fails with err.
+type limitWriter struct {
+	b   bytes.Buffer
+	max int64
+	err error
+}
+
+func (w *limitWriter) Write(p []byte) (int, error) {
+	if int64(w.b.Len())+int64(len(p)) > w.max {
+		return 0, w.err
+	}
+	return w.b.Write(p)
 }
