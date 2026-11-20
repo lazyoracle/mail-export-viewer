@@ -42,7 +42,10 @@ func binary(t testing.TB) string {
 			return
 		}
 		binPath = filepath.Join(dir, "mail-export-viewer")
-		gobin := filepath.Join(runtime.GOROOT(), "bin", "go")
+		gobin := "go"
+		if root := runtime.GOROOT(); root != "" {
+			gobin = filepath.Join(root, "bin", "go") // the toolchain running the test
+		}
 		cmd := exec.Command(gobin, "build", "-trimpath", "-o", binPath, "../../cmd/mail-export-viewer")
 		cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
 		if out, err := cmd.CombinedOutput(); err != nil {

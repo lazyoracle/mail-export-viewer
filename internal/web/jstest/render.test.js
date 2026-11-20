@@ -4,7 +4,7 @@ import { installFakeDOM } from './fakedom.js';
 
 installFakeDOM();
 const { renderRow } = await import('../static/js/list.js');
-const { renderMessage, renderConversation, effectiveView } = await import('../static/js/reader.js');
+const { renderMessage, renderConversation, effectiveView, TEXT_DISPLAY_MAX } = await import('../static/js/reader.js');
 
 const now = new Date('2026-11-20T15:30:00Z');
 const evil = '<img src=x onerror=alert(1)>';
@@ -336,4 +336,16 @@ test('renderConversation mounts a long thread in chunks', () => {
   renderConversation(a, message({ id: 3 }), thread.slice(0, 2), { view: 'text', onView() {}, onBack() {}, now, loadMessage: async () => message() });
   while (t2.length) t2.shift()();
   assert.equal(count(), 2);
+});
+
+test('a very long text body is shown in part, with a notice (issue #23)', () => {
+  const long = 'q'.repeat(TEXT_DISPLAY_MAX + 5000);
+  const { article } = render(message({ text: long }), 'text');
+  const pre = article.querySelector('pre.plain');
+  assert.equal(pre.textContent.length, TEXT_DISPLAY_MAX);
+  const note = article.querySelector('.text-note');
+  assert.ok(note, 'notice shown');
+  assert.ok(note.textContent.includes('Download the original'));
+  const { article: short } = render(message({ text: 'short' }), 'text');
+  assert.equal(short.querySelector('.text-note'), null);
 });

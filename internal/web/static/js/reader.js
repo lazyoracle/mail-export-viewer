@@ -33,14 +33,26 @@ function addrRow(label, addrs) {
   return h('div', { class: 'meta-row' }, h('span', { class: 'meta-key', text: label }), h('span', { class: 'meta-val', text }));
 }
 
-function linkifiedText(text) {
+/**
+ * Most characters of a text body shown in the page. Laying out megabytes
+ * of text (worst: one huge line) freezes the browser for seconds; the
+ * download is always whole.
+ */
+export const TEXT_DISPLAY_MAX = 512 * 1024;
+
+function linkifiedText(msg) {
+  const text = msg.text.length > TEXT_DISPLAY_MAX ? msg.text.slice(0, TEXT_DISPLAY_MAX) : msg.text;
   const pre = h('pre', { class: 'plain' });
   for (const seg of linkify(text)) {
     pre.append(seg.href
       ? h('a', { href: seg.href, text: seg.text, attrs: { target: '_blank', rel: 'noopener noreferrer' } })
       : document.createTextNode(seg.text));
   }
-  return pre;
+  if (text === msg.text) return pre;
+  return h('div', {}, pre, h('p', { class: 'notice text-note', attrs: { role: 'note' } },
+    h('span', { text: `Showing the first ${formatSize(TEXT_DISPLAY_MAX)} of the text. ` }),
+    h('a', { href: api.rawURL(msg.id), text: 'Download the original' }),
+    h('span', { text: ' to read all of it.' })));
 }
 
 function htmlBody(msg) {
@@ -130,7 +142,7 @@ function attachmentList(msg) {
 function bodyFor(msg, current, loadRaw) {
   const body = h('div', { class: `msg-body view-${current}` });
   if (current === 'html') body.append(htmlBody(msg));
-  else if (current === 'text') body.append(msg.text ? linkifiedText(msg.text) : h('p', { class: 'muted empty-body', text: 'This message has no text.' }));
+  else if (current === 'text') body.append(msg.text ? linkifiedText(msg) : h('p', { class: 'muted empty-body', text: 'This message has no text.' }));
   else if (current === 'headers') body.append(headersBody(msg));
   else if (current === 'props') body.append(propsBody(msg));
   else body.append(rawBody(msg, loadRaw));

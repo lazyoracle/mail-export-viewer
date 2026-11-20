@@ -2,7 +2,7 @@
 // (Node 22 built-ins only, no npm packages): launch starts Chromium with a
 // profile below out, opens a page and returns helpers.
 import { spawn } from 'node:child_process';
-import { writeFileSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
+import { writeFileSync, mkdirSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -10,6 +10,8 @@ export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export async function launch(chrome, base, out) {
   mkdirSync(out, { recursive: true });
   const profile = join(out, 'profile');
+  // A port file left by an earlier run would point at a dead browser.
+  rmSync(join(profile, 'DevToolsActivePort'), { force: true });
   const proc = spawn(chrome, ['--headless', '--no-sandbox', '--remote-debugging-port=0', '--disable-gpu',
     `--user-data-dir=${profile}`, 'about:blank'], { stdio: 'ignore' });
   let PORT = 0;
