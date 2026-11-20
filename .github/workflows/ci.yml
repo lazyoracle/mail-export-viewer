@@ -1,6 +1,7 @@
 name: ci
 on:
   push:
+    branches: [develop, main]
   pull_request:
 # Read-only token everywhere; no job publishes anything.
 permissions:

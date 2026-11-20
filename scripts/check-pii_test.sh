@@ -70,5 +70,28 @@ expect 1 "staged offending file fails" "$r"
 r=$(newrepo author "dave${at}corp.test"); echo ok >"$r/a.txt"; commit "$r"
 expect 1 "non-noreply commit author fails" "$r"
 
+r=$(newrepo latin1); printf 'caf\xe9 %s/mail\n' "$h" >"$r/a.txt"; commit "$r"
+expect 1 "latin-1 text with home path fails" "$r"
+
+r=$(newrepo latin1mail); printf 'caf\xe9 erin%scorp.test\n' "$at" >"$r/a.txt"; commit "$r"
+expect 1 "latin-1 text with email fails" "$r"
+
+r=$(newrepo corpnoreply); echo "x${at}corp-noreply.com" >"$r/a.txt"; commit "$r"
+expect 1 "lookalike noreply domain fails" "$r"
+
+r=$(newrepo exio); echo "x${at}example.io" >"$r/a.txt"; commit "$r"
+expect 1 "example.io fails" "$r"
+
+r=$(newrepo noreplylocal); echo "noreply${at}vendor.test" >"$r/a.txt"; commit "$r"
+expect 0 "noreply local part passes" "$r"
+
+r=$(newrepo pkgver); echo "go get pkg${at}v1.2.3" >"$r/a.txt"; commit "$r"
+expect 0 "pkg@version is not an email" "$r"
+
+r=$(newrepo selfscan); cp "$script" "$r/check-pii.sh"; commit "$r"
+expect 0 "script's own text is clean without exemption" "$r"
+printf -- '-----BEGIN %s PRIVATE KEY-----\n' EC >>"$r/check-pii.sh"; commit "$r"
+expect 1 "secret in a script file is flagged" "$r"
+
 echo "passed=$pass failed=$fail"
 [ $fail -eq 0 ]
