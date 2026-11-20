@@ -1,6 +1,7 @@
 package index
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -212,6 +213,62 @@ func TestRemovedSourceDropped(t *testing.T) {
 	s.rdb.QueryRow(`SELECT count(*) FROM folders`).Scan(&n)
 	if n != 1 {
 		t.Errorf("folders = %d", n)
+	}
+}
+
+// cacheFiles returns the bytes of the database and its -wal file.
+func cacheFiles(t *testing.T, db string) []byte {
+	t.Helper()
+	var all []byte
+	for _, suffix := range []string{"", "-wal"} {
+		b, err := os.ReadFile(db + suffix)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+		all = append(all, b...)
+	}
+	return all
+}
+
+func TestRemovedSourceLeavesNoText(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "index.db")
+	s := openAt(t, db, Options{})
+	var es []source.Entry
+	for i := 0; i < 300; i++ {
+		es = append(es, rawEntry("A", i, fmt.Sprintf("Quokkasecret plan %d", i)))
+	}
+	a := newFake(t, source.Mbox, "a", es...)
+	b := newFake(t, source.Mbox, "b", rawEntry("B", 1, "two"))
+	index(t, s, a, b)
+	if !strings.Contains(strings.ToLower(string(cacheFiles(t, db))), "quokkasecret") {
+		t.Fatal("test text not found in the index files at all")
+	}
+	index(t, s, b)
+	// Neither the rows, nor the FTS index terms, nor freed pages, nor the
+	// WAL keep the removed source's text (checked while still open).
+	if bytes.Contains(bytes.ToLower(cacheFiles(t, db)), []byte("quokkasecret")) {
+		t.Fatal("removed source's text still in the cache files")
+	}
+	if r := search(t, s, SearchParams{Q: "two"}); r.Total != 1 {
+		t.Fatalf("remaining source: %d", r.Total)
+	}
+}
+
+func TestRescannedSourceLeavesNoOldText(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "index.db")
+	s := openAt(t, db, Options{})
+	var es []source.Entry
+	for i := 0; i < 300; i++ {
+		es = append(es, rawEntry("A", i, fmt.Sprintf("Wombatsecret plan %d", i)))
+	}
+	a := newFake(t, source.Mbox, "a", es...)
+	index(t, s, a)
+	// The file changed: the messages are now others.
+	a.entries = []source.Entry{rawEntry("A", 1, "replacement")}
+	touch(t, a.path)
+	index(t, s, a)
+	if bytes.Contains(bytes.ToLower(cacheFiles(t, db)), []byte("wombatsecret")) {
+		t.Fatal("old text of a re-indexed source still in the cache files")
 	}
 }
 

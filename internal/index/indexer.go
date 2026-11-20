@@ -91,6 +91,9 @@ func (s *Store) IndexSources(ctx context.Context, srcs []source.Source, onProgre
 	}
 	var work []workItem
 	keep := map[string]bool{}
+	// purged: rows of a removed or re-indexed source are deleted in this
+	// run, so the WAL is checkpointed at the end (see doc.go, privacy).
+	purged := false
 	var prog Progress
 	prog.Running = true
 	for _, src := range srcs {
@@ -106,6 +109,9 @@ func (s *Store) IndexSources(ctx context.Context, srcs []source.Source, onProgre
 		} else {
 			sp.State = StateQueued
 			work = append(work, workItem{src, len(prog.Sources), fp, fpErr})
+			if _, ok := existing[path]; ok {
+				purged = true // its old rows are deleted first
+			}
 		}
 		prog.Sources = append(prog.Sources, sp)
 	}
@@ -117,6 +123,7 @@ func (s *Store) IndexSources(ctx context.Context, srcs []source.Source, onProgre
 			if err := s.removeSource(st.id); err != nil {
 				return err
 			}
+			purged = true
 		}
 	}
 	if len(work) > 0 {
@@ -164,7 +171,15 @@ func (s *Store) IndexSources(ctx context.Context, srcs []source.Source, onProgre
 	if err := s.rebuildFacetsIfDirty(); err != nil {
 		return err
 	}
-	_, err = s.wdb.Exec(sortIndexSQL)
+	if _, err := s.wdb.Exec(sortIndexSQL); err != nil {
+		return err
+	}
+	if purged {
+		// Deleted text is zeroed in the database pages (secure_delete),
+		// but older WAL frames may still hold it: write the WAL back and
+		// truncate it.
+		_, err = s.wdb.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`)
+	}
 	return err
 }
 

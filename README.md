@@ -514,7 +514,10 @@ not into `TMPDIR`.
 - **Reuse.** On start, each file is checked by path, size and modification
   time, along with its `.msf` and `prefs.js` where they apply. Unchanged
   files are reused. Changed or new files are indexed again, and removed ones
-  are dropped.
+  are dropped. The text of dropped or re-indexed messages is overwritten in
+  the database (SQLite `secure_delete`, and FTS5 `secure-delete` for the
+  search index), and the write-ahead log is written back and truncated
+  after such a run, so it does not linger in the cache files.
 - **Clearing.** Quit the viewer and delete the directory, or the one `.db`
   file with its `-wal`, `-shm`, `.lock` and `.run` files. Or run once with
   `-reindex`, which empties the index, vacuums it, and builds it again.

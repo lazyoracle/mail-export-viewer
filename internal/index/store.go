@@ -251,7 +251,8 @@ func openDB(dbPath string) (*Store, error) {
 	// data: keep them in the private cache directory instead of TMPDIR.
 	tmp := "temp_store_directory('" + strings.ReplaceAll(filepath.Dir(dbPath), "'", "''") + "')"
 	wdb, err := sql.Open("sqlite", dsn(dbPath,
-		"busy_timeout(10000)", "journal_mode(WAL)", "synchronous(NORMAL)", "cache_size(-32000)", tmp))
+		"busy_timeout(10000)", "journal_mode(WAL)", "synchronous(NORMAL)", "cache_size(-32000)",
+		"secure_delete(1)", tmp))
 	if err != nil {
 		return nil, err
 	}
@@ -291,6 +292,11 @@ func initSchema(db *sql.DB) error {
 		}
 	}
 	if _, err := db.Exec(schemaSQL); err != nil {
+		return err
+	}
+	// Deleting from the full-text index removes the terms from its
+	// segments at once (not at the next merge); persistent, idempotent.
+	if _, err := db.Exec(`INSERT INTO messages_fts(messages_fts, rank) VALUES('secure-delete', 1)`); err != nil {
 		return err
 	}
 	_, err := db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, schemaVersion))

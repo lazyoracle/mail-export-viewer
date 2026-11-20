@@ -144,7 +144,13 @@
 // ErrNotRegular). SQLite's temporary files (sorts, FTS merges, VACUUM)
 // are put in the cache directory too (PRAGMA temp_store_directory), never
 // in TMPDIR. Reset drops everything, vacuums and truncates the WAL,
-// so no indexed text stays on disk. The
+// so no indexed text stays on disk. Text of removed or re-indexed
+// sources does not stay either: the writer runs with PRAGMA
+// secure_delete=ON (deleted content and freed pages are zeroed; FAST
+// would leave freelist pages), the FTS5 table has its 'secure-delete'
+// option set (terms leave the index segments at once, not at the next
+// merge), and a run that deleted rows ends with wal_checkpoint(TRUNCATE)
+// so no older WAL frame keeps them. Deletes cost more I/O; they are rare. The
 // lock is an exclusive flock held until Close (released by the kernel if
 // the process dies). AcquireLock (FileLock) is that lock, exported so the
 // command's instance lock ("<db>.run", holding the running instance's pid
