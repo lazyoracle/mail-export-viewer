@@ -433,3 +433,16 @@ func TestSidecarProviderConventions(t *testing.T) {
 		})
 	}
 }
+
+// The .msf has no draft bit: a Thunderbird draft keeps the draft flag of
+// its X-Mozilla-Draft-Info header when the sidecar knows it (issue #20).
+func TestSidecarKeepsHeaderDraft(t *testing.T) {
+	dir := t.TempDir()
+	draft := "Subject: draft\nMessage-ID: <d@example.com>\nX-Mozilla-Status: 0001\nX-Mozilla-Draft-Info: internal/draft; vcard=0\n\nunsent\n"
+	path := writeFile(t, filepath.Join(dir, "Drafts"), mboxOf(draft))
+	setSidecar(t, path, &stubSidecar{byID: map[string]source.SidecarMeta{"d@example.com": {Flags: source.Starred}}})
+	es, _ := scan(t, openMbox(t, path, "Drafts"))
+	if len(es) != 1 || es[0].Flags != source.Starred|source.Draft {
+		t.Fatalf("flags %v, want starred and draft", es[0].Flags.Names())
+	}
+}

@@ -157,7 +157,9 @@ func (s *mboxSource) entry(m *message) source.Entry {
 	}
 	if s.sidecar != nil {
 		if sm, ok := s.sidecar.Lookup(hm.MessageID, m.Offset); ok {
-			e.Flags = sm.Flags &^ source.HasAttachment
+			// The .msf flags win, but it has no draft bit: that comes
+			// from X-Mozilla-Draft-Info.
+			e.Flags = sm.Flags&^source.HasAttachment | hm.Flags&source.Draft
 			e.Tags = appendUnique(e.Tags, sm.Tags...)
 			e.Labels = appendUnique(e.Labels, sm.Labels...)
 			for _, p := range sm.Props {

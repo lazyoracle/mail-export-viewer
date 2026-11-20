@@ -128,6 +128,7 @@ type tbFolder struct {
 	rel, folder string
 	n           int
 	msf         bool // write a .msf summary
+	drafts      bool // messages carry X-Mozilla-Draft-Info
 }
 
 // tbTags: keyword -> display name and colour (prefs.js), plus the
@@ -161,11 +162,12 @@ func (g *gen) thunderbird() error {
 		}
 	}
 	folders := []tbFolder{
-		{prof + "/Mail/Local Folders/Inbox", prof + "/Mail/Local Folders/Inbox", 14, true},
-		{prof + "/Mail/Local Folders/Sent", prof + "/Mail/Local Folders/Sent", 6, false},
-		{prof + "/Mail/Local Folders/Archives.sbd/2019", prof + "/Mail/Local Folders/Archives/2019", 5, true},
-		{prof + "/Mail/Local Folders/Archives.sbd/2019.sbd/Q1", prof + "/Mail/Local Folders/Archives/2019/Q1", 3, false},
-		{prof + "/ImapMail/imap.example.com/INBOX", prof + "/ImapMail/imap.example.com/INBOX", 8, true},
+		{prof + "/Mail/Local Folders/Inbox", prof + "/Mail/Local Folders/Inbox", 14, true, false},
+		{prof + "/Mail/Local Folders/Sent", prof + "/Mail/Local Folders/Sent", 6, false, false},
+		{prof + "/Mail/Local Folders/Drafts", prof + "/Mail/Local Folders/Drafts", 2, true, true},
+		{prof + "/Mail/Local Folders/Archives.sbd/2019", prof + "/Mail/Local Folders/Archives/2019", 5, true, false},
+		{prof + "/Mail/Local Folders/Archives.sbd/2019.sbd/Q1", prof + "/Mail/Local Folders/Archives/2019/Q1", 3, false, false},
+		{prof + "/ImapMail/imap.example.com/INBOX", prof + "/ImapMail/imap.example.com/INBOX", 8, true, false},
 	}
 	// Empty Thunderbird folder files next to .sbd directories, and clutter.
 	clutter := map[string]string{
@@ -234,6 +236,10 @@ func (g *gen) tbFolder(fo tbFolder) error {
 		h = append(h, [2]string{"X-Mozilla-Status", fmt.Sprintf("%04x", status)},
 			[2]string{"X-Mozilla-Status2", "00000000"}, [2]string{"X-Mozilla-Keys", hkeys + strings.Repeat(" ", 20)},
 			[2]string{"X-Account-Key", "account1"})
+		if fo.drafts {
+			h = append(h, [2]string{"X-Mozilla-Draft-Info", "internal/draft; vcard=0; receipt=0"})
+			flags |= source.Draft
+		}
 		body := g.words(25) + "\n" + tok + "\nFrom here on the body has a From_ line.\n"
 		m := &msg{headers: h, body: body}
 		var atts []string
