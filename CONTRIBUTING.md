@@ -36,6 +36,12 @@ identities. It looks for:
 CI runs the same check. Commit with your GitHub noreply address
 (`<id>+<user>@users.noreply.github.com`).
 
+`make check-pii-history` applies the path, secret and e-mail patterns to
+every commit on every branch and tag (`git log -p --all`: added and removed
+lines, commit messages and identities), since anything committed and later
+removed is still published with the history. CI runs it in a separate
+job; run it before pushing a branch you rewrote.
+
 ## Development setup
 
 - **Go 1.24 or newer** (`go.mod`: `go 1.24.0`). Dependencies must keep

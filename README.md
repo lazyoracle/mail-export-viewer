@@ -800,6 +800,7 @@ Each package's `doc.go` records its format notes, decisions and limits.
 | `make test-js` | UI unit tests with `node --test` (Node 22 is used in CI) |
 | `make vet` | `go vet ./...` |
 | `make check-pii` | fails if tracked files or commit identities contain home paths, real-looking e-mail addresses, secrets, mail/database/binary files or files over 5 MB |
+| `make check-pii-history` | the same path, e-mail and secret patterns over every commit's diff and message on every ref |
 | `make clean` | removes `dist/` and the binary |
 
 `GO=/path/to/go make …` selects a Go toolchain.
@@ -854,7 +855,8 @@ import format packages, so nothing else needs to change.
 - gofmt and vet;
 - the tests with the race detector;
 - the JavaScript tests;
-- `check-pii`;
+- `check-pii`, and in a separate job `check-pii-history` over the full
+  history;
 - a cross-build of all four targets.
 
 `.github/workflows/release.yml` runs on a `v*` tag:

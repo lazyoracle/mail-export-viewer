@@ -1,4 +1,4 @@
-.PHONY: build test test-race test-js vet cross check-pii check-pii-test clean
+.PHONY: build test test-race test-js vet cross check-pii check-pii-history check-pii-test clean
 
 GO ?= go
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
@@ -35,6 +35,10 @@ cross:
 
 check-pii: check-pii-test
 	scripts/check-pii.sh
+
+# Same patterns over every commit on every ref (diffs, messages, identities).
+check-pii-history: check-pii-test
+	scripts/check-pii.sh --history
 
 check-pii-test:
 	scripts/check-pii_test.sh

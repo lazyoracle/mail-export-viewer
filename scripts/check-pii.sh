@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
-# check-pii.sh [repo-dir]: fail if the repository would publish private data.
-# Scans tracked and staged files (index content) and commit authors for home
-# paths, real-looking email addresses, secrets, oversized files, and
+# check-pii.sh [--history] [repo-dir]: fail if the repository would publish
+# private data.
+# Default: scans tracked and staged files (index content) and commit authors
+# for home paths, real-looking email addresses, secrets, oversized files, and
 # mail/database/binary files outside internal/**/testdata.
 # Only tracked or staged content is scanned: untracked and ignored files are
-# invisible to this check. Portable to macOS (bash 3.2, BSD grep/tr).
+# invisible to this check.
+# --history: scans instead every commit reachable from any ref (git log -p
+# --all: added and removed lines of text files, commit messages, author and
+# committer identities) with the same home-path, secret and email patterns,
+# so data that was committed and later removed is still caught.
+# Portable to macOS (bash 3.2, BSD grep/tr).
 set -u
 export LC_ALL=C
+history=0
+if [ "${1:-}" = "--history" ]; then history=1; shift; fi
 repo="${1:-.}"
 cd "$repo" || exit 2
 fails=0
@@ -27,6 +35,37 @@ email_ok() {
   [ "$domain" = users.noreply.github.com ] && return 0
   printf '%s\n' "$domain" | grep -Eq '(^|\.)example\.(com|org|net)$'
 }
+
+# scan_text name: reports home paths, secrets and emails in stdin.
+scan_text() {
+  local content m addr
+  content="$(tr -d '\0' | grep -a '' || true)"
+  [ -z "$content" ] && return
+  while IFS= read -r m; do
+    [ -n "$m" ] && bad "$1: home-directory path ($m)"
+  done < <(printf '%s\n' "$content" | grep -aEo "$home_re" | sort -u)
+  if m=$(printf '%s\n' "$content" | grep -aEo "$secret_re" | head -1) && [ -n "$m" ]; then
+    bad "$1: private key or token pattern"
+  fi
+  while IFS= read -r addr; do
+    [ -z "$addr" ] && continue
+    email_ok "$addr" || bad "$1: email address not on example.* or noreply ($addr)"
+  done < <(printf '%s\n' "$content" | grep -aEo "$email_re" | sort -u)
+}
+
+if [ $history -eq 1 ]; then
+  if git rev-parse --verify -q HEAD >/dev/null; then
+    # Binary files show as "Binary files ... differ" (their content is
+    # covered by the default scan's binary and testdata rules).
+    # The diff markers (+, -, space) are dropped so they do not join the
+    # text that follows them.
+    scan_text "history" < <(git log --all -p --no-color --no-ext-diff \
+      --format='commit %H%nauthor %an <%ae>%ncommitter %cn <%ce>%n%B' | sed -E 's/^[-+ ]//')
+  fi
+  if [ $fails -gt 0 ]; then echo "check-pii: $fails problem(s) in the history" >&2; exit 1; fi
+  echo "check-pii: history ok"
+  exit 0
+fi
 
 while IFS= read -r -d '' f; do
   size=$(git cat-file -s ":$f" 2>/dev/null || echo 0)
@@ -50,18 +89,7 @@ while IFS= read -r -d '' f; do
       continue
     fi
   fi
-  content="$(git show ":$f" 2>/dev/null | tr -d '\0' | grep -a '' || true)"
-  [ -z "$content" ] && continue
-  if m=$(printf '%s\n' "$content" | grep -aEo "$home_re" | head -1) && [ -n "$m" ]; then
-    bad "$f: home-directory path ($m)"
-  fi
-  if m=$(printf '%s\n' "$content" | grep -aEo "$secret_re" | head -1) && [ -n "$m" ]; then
-    bad "$f: private key or token pattern"
-  fi
-  while IFS= read -r addr; do
-    [ -z "$addr" ] && continue
-    email_ok "$addr" || bad "$f: email address not on example.* or noreply ($addr)"
-  done < <(printf '%s\n' "$content" | grep -aEo "$email_re" | sort -u)
+  scan_text "$f" < <(git show ":$f" 2>/dev/null)
 done < <(git ls-files -z)
 
 # Commit authors and committers.

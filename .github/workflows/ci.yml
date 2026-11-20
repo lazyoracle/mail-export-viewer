@@ -48,3 +48,17 @@ jobs:
         run: make cross
       - name: check-pii
         run: make check-pii
+  # Whole history on every ref: data committed and later removed would
+  # still be published with the repository.
+  pii-history:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: check-pii over the full history
+        run: make check-pii-history

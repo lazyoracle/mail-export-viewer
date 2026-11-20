@@ -93,5 +93,34 @@ expect 0 "script's own text is clean without exemption" "$r"
 printf -- '-----BEGIN %s PRIVATE KEY-----\n' EC >>"$r/check-pii.sh"; commit "$r"
 expect 1 "secret in a script file is flagged" "$r"
 
+# --history: every commit's diff and message on every ref, not just HEAD.
+expecth() { # want(0|1) name repo
+  local out rc
+  out="$("$script" --history "$3" 2>&1)"; rc=$?
+  if { [ "$1" = 0 ] && [ $rc -eq 0 ]; } || { [ "$1" = 1 ] && [ $rc -ne 0 ]; }; then
+    pass=$((pass+1)); echo "ok   $2"
+  else
+    fail=$((fail+1)); echo "FAIL $2 (rc=$rc)"; echo "$out" | sed 's/^/     /'
+  fi
+}
+
+r=$(newrepo hclean); echo "mail a${at}example.com" >"$r/a.txt"; commit "$r"; echo more >>"$r/a.txt"; commit "$r"
+expecth 0 "history: clean history passes" "$r"
+
+r=$(newrepo hpath); echo "path $h/mail" >"$r/a.txt"; commit "$r"; echo clean >"$r/a.txt"; commit "$r"
+expect 0 "history: HEAD-only scan misses a removed home path" "$r"
+expecth 1 "history: removed home path fails" "$r"
+
+r=$(newrepo hmail); echo "carol${at}corp.test" >"$r/a.txt"; commit "$r"; git -C "$r" rm -q a.txt; git -C "$r" commit -q -m gone
+expecth 1 "history: removed email fails" "$r"
+
+r=$(newrepo hmsg); echo ok >"$r/a.txt"; git -C "$r" add -A; git -C "$r" commit -q -m "fix for erin${at}corp.test"
+expect 0 "history: HEAD-only scan ignores commit messages" "$r"
+expecth 1 "history: email in a commit message fails" "$r"
+
+r=$(newrepo hbranch); echo ok >"$r/a.txt"; commit "$r"; git -C "$r" checkout -q -b side
+printf -- '-----BEGIN %s PRIVATE KEY-----\n' RSA >"$r/k.txt"; commit "$r"; git -C "$r" checkout -q -
+expecth 1 "history: secret on another branch fails" "$r"
+
 echo "passed=$pass failed=$fail"
 [ $fail -eq 0 ]
