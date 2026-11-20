@@ -227,3 +227,19 @@ func TestResetLeavesNoMailText(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenCreatesPrivateCacheDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "cache", "mail-export-viewer")
+	db, err := CachePath(dir, "/data/in")
+	if err != nil {
+		t.Fatal(err)
+	}
+	openAt(t, db, Options{})
+	fi, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := fi.Mode().Perm(); m != 0o700 {
+		t.Errorf("cache dir mode = %o, want 700", m)
+	}
+}

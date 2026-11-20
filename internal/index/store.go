@@ -196,7 +196,8 @@ func CachePath(cacheDir, input string) (string, error) {
 	return filepath.Join(cacheDir, "index-"+hex.EncodeToString(sum[:12])+".db"), nil
 }
 
-// Open opens (creating if needed) the index at dbPath and takes its lock
+// Open opens (creating it and missing parent directories, mode 0700, if
+// needed) the index at dbPath and takes its lock
 // (ErrLocked if another Store holds it). A database written by another
 // schema version, or one SQLite reports corrupt, is wiped and recreated:
 // it is only a cache.
@@ -206,6 +207,11 @@ func CachePath(cacheDir, input string) (string, error) {
 // 0600), and a symlink at any of these paths is refused rather than
 // followed.
 func Open(dbPath string, opts Options) (*Store, error) {
+	// The cache directory (if missing) is created private; an existing
+	// one is left as it is.
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
+		return nil, fmt.Errorf("index: create cache directory: %w", err)
+	}
 	lock, err := acquireLock(dbPath + ".lock")
 	if err != nil {
 		return nil, err
