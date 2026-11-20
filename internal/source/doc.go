@@ -141,11 +141,13 @@
 // The mbox and msf packages never import each other. The msf package calls
 // RegisterSidecarProvider from init with a function that, given an mbox
 // path, opens the sidecar "<mbox>.msf" (and finds prefs.js for tag names
-// and colours), returning nil when there is none or it is unusable (after
-// its own warning handling; a corrupt sidecar must not fail the mbox). The
-// mbox source calls SidecarFor(path) once per mbox file in Open or Scan,
-// then for every message calls Lookup(Message-ID, From_ line offset,
-// X-Mozilla-Status key) and, when ok, replaces its header-derived flags by
+// and colours). It returns (nil, nil) when there is no sidecar, (nil, err)
+// when it is unusable (corrupt, oversized, unreadable: the mbox must not
+// fail, it keeps header-derived metadata and reports err as a warning), and
+// (sc, err) with both non-nil when usable but degraded (report err as a
+// warning, use sc). The mbox source calls SidecarFor(path) once per mbox
+// file in Open or Scan, then for every message calls Lookup(Message-ID,
+// From_ line offset) and, when ok, replaces its header-derived flags by
 // SidecarMeta.Flags (keeping HasAttachment) and appends Tags, Labels and
 // Props (dropping duplicates). It adds Sidecar.Inputs() to its own Inputs.
 // SidecarMeta.Tags are display names already. TagInfo maps tag keys (as

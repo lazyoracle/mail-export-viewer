@@ -14,12 +14,15 @@
 //
 // A Mork file is a "// <!-- <mdb:mork:z v="1.4"/> -->" header followed by:
 //
-//	< <(a=c)> (80=name)(81=text) >   dictionary; (a=c) sets atom scope
-//	                                 (c: column names, other: values)
-//	{1:^80 {(k:...)} [..] [..]}      table (id:scope); meta table skipped
+//	< <(a=c)> (80=name) >            dictionary; (a=c) selects the column
+//	<(80=text)>                      scope; a plain dictionary is values
+//	{1:^80 {(k^BE:c)} [..] [..]}    table (id:scope); meta table skipped;
+//	                                 table-level "-[id]" row removal is not
+//	                                 interpreted (rows stay)
 //	[1:^80 (^81=lit)(^81^82)]        row (id:scope); cell col=literal or
 //	                                 col^valueAtom; "-(^81)" deletes a cell
-//	[-1:^80]                         deletes the row
+//	[-1:^80 (^81=x)]                 cuts all cells of the row, then applies
+//	                                 the cells that follow
 //	@$${5{@ ... @$$}5}@              transaction group; "@$$}~~}@" aborts
 //
 // Text values decode "$XX" (hex byte), "\c" (literal c) and "\<newline>"
@@ -37,19 +40,23 @@
 // # Sidecar semantics (sidecar.go)
 //
 // Message rows are those outside the dbfolderinfo and thread scopes holding
-// messageId, storeToken, msgOffset or flags. Lookup tries, in order: the
-// byte offset (storeToken, decimal, or msgOffset, hex), the Message-ID (only
-// when unique in the folder), then the statusKey read as the decimal message
-// key (the row id). A hit whose own Message-ID contradicts the one asked for
-// is rejected, so a summary that is stale after compaction never attaches
-// metadata to the wrong message.
+// message-id, storeToken, msgOffset or flags. Lookup(msgID, offset) matches
+// the From_ byte offset against a row's storeToken (decimal) or msgOffset
+// (hex); in old folders whose rows have neither, against the row id. Failing
+// that it matches a Message-ID that is unique in the folder. Every hit other
+// than an explicit offset match must also match the Message-ID, and an
+// explicit hit whose own Message-ID contradicts the one asked for is
+// rejected, so a summary that is stale after compaction never attaches
+// metadata to the wrong message. (X-Mozilla-Status is a flag word, not a key,
+// so it plays no part.)
 //
 // Columns (numbers are hex in Mork except storeToken and junkscore):
 //
 //	flags      Thunderbird flags: not Read -> Unread, Replied -> Answered,
 //	           Marked -> Starred, Expunged/ImapDeleted -> Deleted, Forwarded
-//	priority   4,5 -> Important; shown as Prop "priority" (lowest..highest,
-//	           normal and none are omitted)
+//	priority   nsMsgPriority (0 unset, 1 none, 2 lowest, 3 low, 4 normal,
+//	           5 high, 6 highest); 5 and 6 -> Important; Prop "priority"
+//	           (lowest, low, high, highest)
 //	junkscore  100 -> Junk; always kept as Prop "junkscore"
 //	keywords   space separated tag keys -> display names; label 1..5 adds
 //	           "$labelN". Bookkeeping keywords (junk, nonjunk, $forwarded,
@@ -61,7 +68,11 @@
 // directory of the mbox (the profile root, at most 16 levels up):
 // user_pref("mailnews.tags.<key>.tag"/".color", "...") over the defaults
 // $label1..5 = Important, Work, Personal, To Do, Later. prefs.js is listed
-// in Inputs. A missing, unreadable, oversized, non-Mork or message-less .msf
-// makes the provider return nil: the mbox keeps its header-derived metadata.
-// The Sidecar contract has no warning channel, so the provider is silent.
+// in Inputs. The nearest ancestor holding a Mail/ or ImapMail/ child wins over
+// a nearer stray prefs.js.
+//
+// Provider results: (nil, nil) for no .msf or one without messages; (nil, err)
+// for an unreadable, non-regular, oversized (256 MiB) or non-Mork file, the
+// mbox then keeps header-derived metadata; (sidecar, err) when usable but the
+// parser skipped garbage or rolled back an interrupted write (a warning).
 package msf

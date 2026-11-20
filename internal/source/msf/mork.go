@@ -259,7 +259,7 @@ func (p *parser) atom(id uint64, scopeIsCol bool) (string, bool) {
 // dict parses a dictionary after its '<'. Nested "<...>" are meta dicts
 // whose (a=c) sets the atom scope ("c": column names, else values).
 func (p *parser) dict() {
-	scopeCol := true
+	scopeCol := false // a plain dictionary holds values; (a=c) switches to columns
 	level := 1
 	for p.i < len(p.d) && level > 0 {
 		switch p.d[p.i] {
@@ -483,13 +483,6 @@ loop:
 	}
 	k := rowKey{scope, id}
 	r := p.rows[k]
-	if neg {
-		if r != nil {
-			p.kill(r)
-			delete(p.rows, k)
-		}
-		return
-	}
 	if r == nil {
 		if len(p.rows) >= maxRows {
 			p.problems++
@@ -505,23 +498,20 @@ loop:
 			})
 		}
 	}
+	if neg {
+		// "[-id ...]" cuts every cell of the row, then applies the cells that follow.
+		old := r.Cells
+		r.Cells = nil
+		if p.inGroup {
+			p.undo = append(p.undo, func() { r.Cells = old })
+		}
+	}
 	for _, u := range ups {
 		if u.del {
 			p.delCell(r, u.c.Col)
 		} else {
 			p.setCell(r, u.c)
 		}
-	}
-}
-
-func (p *parser) kill(r *Row) {
-	r.dead = true
-	if p.inGroup {
-		k := rowKey{r.Scope, r.ID}
-		p.undo = append(p.undo, func() {
-			r.dead = false
-			p.rows[k] = r
-		})
 	}
 }
 
@@ -564,8 +554,12 @@ func (p *parser) delCell(r *Row, col string) {
 // group handles a "@$${id{@" begin, "@$$}id}@" commit or "@$$}~~}@" abort
 // marker at p.i.
 func (p *parser) group() {
-	end := bytes.IndexByte(p.d[p.i+1:], '@')
-	if end < 0 || end > maxMarkLen {
+	window := p.d[p.i+1:]
+	if len(window) > maxMarkLen+1 {
+		window = window[:maxMarkLen+1]
+	}
+	end := bytes.IndexByte(window, '@')
+	if end < 0 {
 		p.i++
 		return
 	}

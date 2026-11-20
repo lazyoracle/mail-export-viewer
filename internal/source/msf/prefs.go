@@ -22,17 +22,23 @@ var defaultTags = []source.TagStyle{
 	{Name: "Later", Color: "#993399"},
 }
 
-// findPrefs walks up from dir to the nearest prefs.js (the profile root)
-// and returns the mailnews.tags.* preferences found in it, keyed
-// "<key>.tag" / "<key>.color", and its path ("" when there is none).
+// findPrefs walks up from dir for prefs.js and returns the mailnews.tags.*
+// preferences found in it, keyed "<key>.tag" / "<key>.color", and its path
+// ("" when there is none). The profile root, recognised by a Mail/ or
+// ImapMail/ child next to prefs.js, wins over a nearer stray prefs.js; with
+// no such directory the nearest prefs.js is used.
 func findPrefs(dir string) (map[string]string, string) {
+	nearest := ""
 	for i := 0; i < maxPrefsDepth; i++ {
 		p := filepath.Join(dir, "prefs.js")
-		if st, err := os.Stat(p); err == nil && st.Mode().IsRegular() && st.Size() <= maxPrefsBytes {
-			if data, err := os.ReadFile(p); err == nil {
-				return parsePrefs(string(data)), p
+		if st, err := os.Stat(p); err == nil && st.Mode().IsRegular() {
+			if nearest == "" {
+				nearest = p
 			}
-			return nil, ""
+			if isDir(filepath.Join(dir, "Mail")) || isDir(filepath.Join(dir, "ImapMail")) {
+				nearest = p
+				break
+			}
 		}
 		up := filepath.Dir(dir)
 		if up == dir {
@@ -40,7 +46,19 @@ func findPrefs(dir string) (map[string]string, string) {
 		}
 		dir = up
 	}
-	return nil, ""
+	if nearest == "" {
+		return nil, ""
+	}
+	data, err := readFile(nearest, maxPrefsBytes)
+	if err != nil {
+		return nil, ""
+	}
+	return parsePrefs(string(data)), nearest
+}
+
+func isDir(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir()
 }
 
 // parsePrefs extracts string-valued user_pref("mailnews.tags.<key>.<tag|color>", "...").

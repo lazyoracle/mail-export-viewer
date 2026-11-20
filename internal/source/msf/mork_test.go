@@ -66,16 +66,28 @@ func TestParseRows(t *testing.T) {
 	}
 }
 
-func TestParseMergeAndDelete(t *testing.T) {
-	f := mustParse(t, header+"<(80=a)(81=b)>[1:s(^80=1)(^81=2)][2:s(^80=x)][1:s(^80=9)-(^81)][-2:s][3:s]")
-	if len(f.Rows) != 2 {
+func TestParseMergeAndCut(t *testing.T) {
+	// "[-id ...]" cuts all cells of the row, then applies the cells that follow.
+	f := mustParse(t, header+"<(80=a)(81=b)>[1:s(^80=1)(^81=2)][2:s(^80=x)][1:s(^80=9)-(^81)][-2:s(^81=q)][3:s]")
+	if len(f.Rows) != 3 {
 		t.Fatalf("rows = %+v", f.Rows)
 	}
 	if got := cells(f.Rows[0]); len(got) != 1 || got["a"] != "9" {
 		t.Errorf("row 1 cells = %v", got)
 	}
-	if f.Rows[1].ID != 3 || len(f.Rows[1].Cells) != 0 {
-		t.Errorf("row 3 = %+v", f.Rows[1])
+	if got := cells(f.Rows[1]); len(got) != 1 || got["b"] != "q" {
+		t.Errorf("row 2 cells = %v", got)
+	}
+	if f.Rows[2].ID != 3 || len(f.Rows[2].Cells) != 0 {
+		t.Errorf("row 3 = %+v", f.Rows[2])
+	}
+}
+
+func TestParseDictScopeDefault(t *testing.T) {
+	// A plain dictionary is in value scope; only (a=c) switches to columns.
+	f := mustParse(t, header+"< <(a=c)> (80=flags)>\n<(80=9)>\n[1(^80^80)]")
+	if len(f.Rows) != 1 || cells(f.Rows[0])["flags"] != "9" {
+		t.Fatalf("rows = %+v", f.Rows)
 	}
 }
 
@@ -126,7 +138,8 @@ func TestParseHostile(t *testing.T) {
 			if err != nil || f == nil {
 				t.Fatalf("Parse = %v, %v", f, err)
 			}
-			if d := time.Since(start); d > 5*time.Second {
+			// Generous bound: only catches super-linear blowups, even under -race.
+			if d := time.Since(start); d > 30*time.Second {
 				t.Errorf("took %v", d)
 			}
 		})
@@ -144,6 +157,7 @@ func TestParseLimits(t *testing.T) {
 }
 
 func FuzzParse(f *testing.F) {
+	f.Add([]byte(buildMork(map[string]string{"_id": "1", "message-id": "a@example.com", "flags": "1"})))
 	f.Add([]byte(header + "< <(a=c)> (80=flags)(81=x$20y)>{1:^80 {(k:^80)}[1:^80(^80^81)(q=r\\)s)]}\n@$${1{@[2(a=b)]@$$}~~}@"))
 	f.Add([]byte(header + "[-1:c-(a)]{[(]}<<(a=v)>>"))
 	f.Add([]byte("\x00\xff@$$}@@$${"))
