@@ -49,6 +49,30 @@ func TestRealNDB(t *testing.T) {
 				if _, err := d.subnodes(n.bidSub); err != nil {
 					t.Errorf("node %#x subnodes: %v", nid, err)
 				}
+				o, err := d.openObj(n.bidData, n.bidSub)
+				if err != nil {
+					t.Fatalf("node %#x: %v", nid, err)
+				}
+				p, err := o.pc()
+				if err != nil {
+					t.Fatalf("node %#x PC: %v", nid, err)
+				}
+				t.Logf("node %#x: %d properties, display name %q", nid, len(p.props), p.set("").str(0x3001))
+			}
+			n, err := d.node(0x12D)
+			if err != nil {
+				t.Fatal(err)
+			}
+			o, err := d.openObj(n.bidData, n.bidSub)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tb, err := o.table()
+			if err != nil {
+				t.Fatalf("root hierarchy table: %v", err)
+			}
+			for i := 0; i < tb.len(); i++ {
+				t.Logf("root child %#x %q", tb.rowID(i), tb.set(i, "").str(0x3001))
 			}
 		})
 	}
