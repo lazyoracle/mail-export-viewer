@@ -557,3 +557,60 @@ func FuzzSearch(f *testing.F) {
 		}
 	})
 }
+
+func TestNegatedDatesKeepUndated(t *testing.T) {
+	s := openStore(t)
+	mk := func(i int, date string) source.Entry {
+		raw := fmt.Sprintf("From: x@example.com\nSubject: m%d\n%s\nbody\n", i, date)
+		return source.Entry{Folder: "A", Raw: []byte(raw), Loc: source.Locator{Offset: int64(i), Length: 1}}
+	}
+	index(t, s, newFake(t, source.Mbox, "a",
+		mk(1, "Date: Mon, 3 Jan 2022 10:00:00 +0000\n"), mk(2, "Date: Mon, 1 Jan 2024 10:00:00 +0000\n"), mk(3, "")))
+	for q, want := range map[string][]string{
+		"before:2023":  {"m1"},
+		"-before:2023": {"m2", "m3"},
+		"after:2023":   {"m2"},
+		"-after:2023":  {"m1", "m3"},
+	} {
+		var got []string
+		for _, r := range search(t, s, SearchParams{Q: q}).Items {
+			got = append(got, r.Subject)
+		}
+		if got = sorted(got); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s = %v, want %v", q, got, want)
+		}
+	}
+}
+
+func TestCcNegationIsComplement(t *testing.T) {
+	s, ids := searchFixture(t)
+	all := sorted(keysOf(search(t, s, SearchParams{Limit: 100}), ids))
+	for _, v := range []string{"dana", "ana", "example.org", "Dana", `"dana@example.org"`, "会", "rcpt"} {
+		pos := keysOf(search(t, s, SearchParams{Q: "cc:" + v, Limit: 100}), ids)
+		neg := keysOf(search(t, s, SearchParams{Q: "-cc:" + v, Limit: 100}), ids)
+		if got := sorted(append(pos, neg...)); !reflect.DeepEqual(got, all) {
+			t.Errorf("cc:%s %v + -cc:%s %v is not everything", v, pos, v, neg)
+		}
+	}
+}
+
+func TestHighlightMarkersInTextAreStripped(t *testing.T) {
+	raw := "From: x@example.com\nSubject: odd " + hlClose + "marker" + hlOpen + " subject\n\nbody with " +
+		hlOpen + "stray" + hlClose + " markers and target\n"
+	s := openStore(t)
+	index(t, s, newFake(t, source.Mbox, "a", source.Entry{Folder: "A", Raw: []byte(raw), Loc: source.Locator{Length: 1}}))
+	for _, q := range []string{"target", "stray", "marker"} {
+		r := search(t, s, SearchParams{Q: q + " "})
+		if len(r.Items) != 1 {
+			t.Fatalf("%s: %d items", q, len(r.Items))
+		}
+		it := r.Items[0]
+		h := r.Highlights[it.ID]
+		if strings.ContainsAny(it.Snippet+it.Subject+h, hlOpen+hlClose) {
+			t.Errorf("%s: markers leak: snippet %q subject %q highlight %q", q, it.Snippet, it.Subject, h)
+		}
+		if !strings.Contains(h, "<mark>"+q) {
+			t.Errorf("%s: highlight %q", q, h)
+		}
+	}
+}

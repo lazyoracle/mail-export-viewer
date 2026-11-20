@@ -145,6 +145,25 @@ func termCond(kinds string, v string) (string, any) {
 		WHERE t.kind IN (` + kinds + `) AND t.name = ? COLLATE NOCASE)`, v
 }
 
+// ccCond selects messages whose Cc holds v: the FTS to/cc column has the
+// words (as for to:) and the Cc text the substring; CJK terms (one long
+// token in FTS) by substring only. -cc: is exactly its negation. "" for a
+// term without token characters (no condition).
+func ccCond(v string) (string, []any) {
+	if !hasTokenChars(v) {
+		return "", nil
+	}
+	like := `m.cc_text LIKE ? ESCAPE '\'`
+	pat := "%" + likeEscape(v) + "%"
+	if isCJK(v) {
+		if hasASCIILetter(v) {
+			return like, []any{pat}
+		}
+		return `instr(m.cc_text, ?) > 0`, []any{v}
+	}
+	return "(" + ftsIn + " AND " + like + ")", []any{"to_text : " + ftsQuote(v), pat}
+}
+
 // folderCond selects messages in folders whose path is v or ends in "/v".
 func folderCond(v string) (string, []any) {
 	return `m.folder_id IN (SELECT id FROM folders WHERE path = ? COLLATE NOCASE OR path LIKE ? ESCAPE '\')`,
@@ -178,7 +197,6 @@ func compileQuery(q Query, includeDeleted bool) compiled {
 	textCols := []string{"subject", "from_name", "from_email"}
 	fromCols := []string{"from_name", "from_email"}
 	toCols := []string{"to_text", "cc_text"} // FTS to_text holds To and Cc
-	ccCols := []string{"cc_text"}
 	subjectCols := []string{"subject"}
 	for i, t := range q.Terms {
 		text(t, "", q.prefixLast && i == len(q.Terms)-1 && prefixable(t), textCols...)
@@ -195,12 +213,9 @@ func compileQuery(q Query, includeDeleted bool) compiled {
 	for _, t := range q.Subject {
 		text(t, "subject", false, subjectCols...)
 	}
-	// cc: has no FTS column of its own: FTS to_text narrows, the Cc column
-	// decides.
 	for _, t := range q.Cc {
-		if hasTokenChars(t) {
-			text(t, "to_text", false, ccCols...)
-			c.addScan(`m.cc_text LIKE ? ESCAPE '\'`, "%"+likeEscape(t)+"%")
+		if cond, args := ccCond(t); cond != "" {
+			c.addScan(cond, args...)
 		}
 	}
 	// notText adds a negative full-text item; col is "" for all columns.
@@ -232,8 +247,8 @@ func compileQuery(q Query, includeDeleted bool) compiled {
 		notText(t, "subject", subjectCols...)
 	}
 	for _, t := range q.NotCc {
-		if hasTokenChars(t) {
-			c.addScan(`m.cc_text NOT LIKE ? ESCAPE '\'`, "%"+likeEscape(t)+"%")
+		if cond, args := ccCond(t); cond != "" {
+			c.addScan("NOT "+cond, args...)
 		}
 	}
 	c.hl = strings.Join(pos, " AND ")
@@ -293,6 +308,12 @@ func compileQuery(q Query, includeDeleted bool) compiled {
 	}
 	if q.After != nil {
 		c.add(`m.date_unix >= ?`, q.After.Unix())
+	}
+	if q.NotBefore != nil {
+		c.add(`(m.date_unix IS NULL OR m.date_unix >= ?)`, q.NotBefore.Unix())
+	}
+	if q.NotAfter != nil {
+		c.add(`(m.date_unix IS NULL OR m.date_unix < ?)`, q.NotAfter.Unix())
 	}
 	if !includeDeleted && !q.Is.Has(source.Deleted) {
 		c.conds = append(c.conds, deletedCond)

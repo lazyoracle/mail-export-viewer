@@ -64,9 +64,13 @@ func resolveEntry(e *source.Entry) (err error) {
 	return nil
 }
 
-// clean makes s valid UTF-8 and at most n bytes.
+// hlStrip removes the private-use runes Search uses as highlight markers,
+// so indexed text can never fake or unbalance them.
+var hlStrip = strings.NewReplacer(hlOpen, "", hlClose, "")
+
+// clean makes s valid UTF-8 without highlight markers, at most n bytes.
 func clean(s string, n int) string {
-	return truncateUTF8(strings.ToValidUTF8(s, "�"), n)
+	return truncateUTF8(hlStrip.Replace(strings.ToValidUTF8(s, "�")), n)
 }
 
 // names cleans a name list: valid UTF-8, no newlines, bounded, no empty

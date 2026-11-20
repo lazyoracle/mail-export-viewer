@@ -33,7 +33,8 @@ const (
 //	   deleted|trash|junk|spam|important
 //	has:attachment
 //	before: after:                YYYY, YYYY-MM or YYYY-MM-DD ('/' allowed),
-//	                              UTC; before exclusive, after inclusive
+//	                              UTC; before exclusive, after inclusive;
+//	                              undated messages match only the negations
 //
 // Values may be quoted (inside quotes \" is a literal double quote and \\
 // a literal backslash). Unknown operators and malformed values are plain
@@ -51,6 +52,9 @@ type Query struct {
 	Is, NotIs source.Flags
 
 	Before, After *time.Time
+	// NotBefore/NotAfter come from -before:/-after:; unlike after:/before:
+	// they keep messages without a date.
+	NotBefore, NotAfter *time.Time
 
 	// prefixLast: the last item of the input is a plain (non-negated,
 	// unquoted) term still being typed; it is matched as a prefix.
@@ -166,16 +170,14 @@ func (q *Query) addOperator(key, val string, neg bool) bool {
 		if !ok {
 			return false
 		}
-		if neg { // -before:X is after:X and vice versa
-			if key == "before" {
-				key = "after"
-			} else {
-				key = "before"
-			}
-		}
-		if key == "before" {
+		switch {
+		case key == "before" && neg:
+			q.NotBefore = &t
+		case key == "before":
 			q.Before = &t
-		} else {
+		case neg:
+			q.NotAfter = &t
+		default:
 			q.After = &t
 		}
 		return true
