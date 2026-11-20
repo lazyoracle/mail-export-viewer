@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -224,7 +225,7 @@ func TestSidecarUnusable(t *testing.T) {
 		setup   func(t *testing.T) string
 		wantErr bool
 	}{
-		{"missing", func(t *testing.T) string { m, _ := profile(t, "", prefs); return m }, false},
+		{"missing", func(t *testing.T) string { m, _ := profile(t, "", ""); return m }, false},
 		{"corrupt", func(t *testing.T) string { m, _ := profile(t, "this is not a mork file", ""); return m }, true},
 		{"directory", func(t *testing.T) string {
 			m, _ := profile(t, "", "")
@@ -252,6 +253,36 @@ func TestSidecarUnusable(t *testing.T) {
 			t.Errorf("SidecarFor = %v, %v; want nil sidecar and an error", sc, err)
 		}
 	})
+}
+
+// Without a usable .msf the folder still gets the profile's tag names
+// (issue #14): a sidecar that knows no message but has TagInfo.
+func TestSidecarPrefsWithoutMsf(t *testing.T) {
+	for _, tc := range []struct {
+		name, msf string
+		wantErr   bool
+	}{
+		{"missing", "", false},
+		{"empty", buildMork(), false},
+		{"corrupt", "this is not a mork file", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mbox, prof := profile(t, tc.msf, prefs)
+			sc, err := source.SidecarFor(mbox)
+			if sc == nil || (err != nil) != tc.wantErr {
+				t.Fatalf("SidecarFor = %v, %v; want a tags-only sidecar, error=%v", sc, err, tc.wantErr)
+			}
+			if got := sc.TagInfo()["work"].Name; got != `Work "Stuff"` {
+				t.Errorf("TagInfo[work] = %q", got)
+			}
+			if _, ok := sc.Lookup("m1@example.com", 0); ok {
+				t.Errorf("Lookup found a message without a .msf")
+			}
+			if !slices.Contains(sc.Inputs(), filepath.Join(prof, "prefs.js")) {
+				t.Errorf("Inputs %v lack prefs.js", sc.Inputs())
+			}
+		})
+	}
 }
 
 func TestSidecarDegraded(t *testing.T) {

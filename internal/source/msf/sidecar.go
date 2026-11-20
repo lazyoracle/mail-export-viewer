@@ -83,15 +83,17 @@ func readFile(path string, limit int) ([]byte, error) {
 func provider(mbox string) (source.Sidecar, error) {
 	msf := mbox + ".msf"
 	if _, err := os.Lstat(msf); os.IsNotExist(err) {
-		return nil, nil
+		// The .msf is still an input: its later creation changes the
+		// fingerprint of the folder.
+		return tagsOnly(mbox, []string{msf}, nil)
 	}
 	data, err := readFile(msf, maxInput)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", msf, err)
+		return tagsOnly(mbox, []string{msf}, fmt.Errorf("%s: %w", msf, err))
 	}
 	f, err := Parse(data)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", msf, err)
+		return tagsOnly(mbox, []string{msf}, fmt.Errorf("%s: %w", msf, err))
 	}
 	s := &sidecar{
 		inputs:   []string{msf},
@@ -106,8 +108,17 @@ func provider(mbox string) (source.Sidecar, error) {
 		}
 	}
 	if s.msgs == 0 {
-		return nil, nil
+		return tagsOnly(mbox, []string{msf}, nil)
 	}
+	s.addPrefs(mbox)
+	if f.Problems > 0 {
+		return s, fmt.Errorf("%s: %d malformed or uncommitted parts were skipped", msf, f.Problems)
+	}
+	return s, nil
+}
+
+// addPrefs loads the tag names and colours of the profile's prefs.js.
+func (s *sidecar) addPrefs(mbox string) (found bool) {
 	prefs, prefsPath := findPrefs(filepath.Dir(mbox))
 	s.tags = tagStyles(prefs)
 	if prefsPath != "" {
@@ -117,10 +128,18 @@ func provider(mbox string) (source.Sidecar, error) {
 	for k, v := range s.tags {
 		s.byLower[strings.ToLower(k)] = v
 	}
-	if f.Problems > 0 {
-		return s, fmt.Errorf("%s: %d malformed or uncommitted parts were skipped", msf, f.Problems)
+	return prefsPath != ""
+}
+
+// tagsOnly is the sidecar of a folder without a usable .msf: it knows no
+// message, only the profile's tag names (so keywords from X-Mozilla-Keys
+// are still named). Without a prefs.js there is no sidecar, only err.
+func tagsOnly(mbox string, inputs []string, err error) (source.Sidecar, error) {
+	s := &sidecar{inputs: inputs, byOffset: map[int64]*Row{}, byID: map[string]*Row{}, legacy: map[int64]*Row{}}
+	if !s.addPrefs(mbox) {
+		return nil, err
 	}
-	return s, nil
+	return s, err
 }
 
 // isMessage reports whether r is a message row (not folder info or a thread).

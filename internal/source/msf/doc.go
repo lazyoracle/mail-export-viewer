@@ -71,8 +71,13 @@
 // in Inputs. The nearest ancestor holding a Mail/ or ImapMail/ child wins over
 // a nearer stray prefs.js.
 //
-// Provider results: (nil, nil) for no .msf or one without messages; (nil, err)
-// for an unreadable, non-regular, oversized (256 MiB) or non-Mork file, the
-// mbox then keeps header-derived metadata; (sidecar, err) when usable but the
-// parser skipped garbage or rolled back an interrupted write (a warning).
+// Provider results: (sidecar, nil) for a .msf with messages; (sidecar, err)
+// when usable but the parser skipped garbage or rolled back an interrupted
+// write (a warning). Without a usable .msf (none, one without messages, or
+// an unreadable, non-regular, oversized (256 MiB) or non-Mork file, the
+// last ones reported as err) the mbox keeps header-derived metadata, and
+// when a prefs.js is found the result is still a tags-only sidecar that
+// knows no message but names X-Mozilla-Keys keywords; with no prefs.js it
+// is (nil, nil) or (nil, err). The .msf path is an input even when missing,
+// so creating it later re-indexes the folder.
 package msf
