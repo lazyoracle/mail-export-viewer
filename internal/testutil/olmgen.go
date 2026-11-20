@@ -159,10 +159,9 @@ func OLMMessageEntries(name string, m OLMMsg, attDir string) []OLMEntry {
 	return append([]OLMEntry{{Name: name, Data: x}}, files...)
 }
 
-// WriteOLM writes a zip archive with the given entries (in order, names
-// used verbatim, so hostile names can be tested) and returns path.
-func WriteOLM(t testing.TB, path string, entries ...OLMEntry) string {
-	t.Helper()
+// OLMBytes returns a zip archive with the given entries (in order, names
+// used verbatim, so hostile names can be tested).
+func OLMBytes(entries ...OLMEntry) ([]byte, error) {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	for _, e := range entries {
@@ -174,26 +173,37 @@ func WriteOLM(t testing.TB, path string, entries ...OLMEntry) string {
 			w, err := zw.CreateRaw(&zip.FileHeader{Name: e.Name, Method: zip.Deflate, CRC32: crc32.ChecksumIEEE(e.Data),
 				CompressedSize64: uint64(comp.Len()), UncompressedSize64: e.DeclaredSize})
 			if err != nil {
-				t.Fatal(err)
+				return nil, err
 			}
 			w.Write(comp.Bytes())
 			continue
 		}
 		w, err := zw.Create(e.Name)
 		if err != nil {
-			t.Fatal(err)
+			return nil, err
 		}
 		if _, err := w.Write(e.Data); err != nil {
-			t.Fatal(err)
+			return nil, err
 		}
 	}
 	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// WriteOLM writes OLMBytes(entries...) to path (creating parent
+// directories) and returns path.
+func WriteOLM(t testing.TB, path string, entries ...OLMEntry) string {
+	t.Helper()
+	b, err := OLMBytes(entries...)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+	if err := os.WriteFile(path, b, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return path
