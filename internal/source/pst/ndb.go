@@ -262,10 +262,22 @@ func (d *ndb) block(bid uint64) ([]byte, error) {
 	if cb > d.l.maxBlock {
 		return nil, corrupt("block %#x too large", bid)
 	}
-	b, err := d.readAt(ib, cb)
+	// Read the block with its trailer, whose size and BID must agree with
+	// the BBT (a mismatch fails this block only).
+	n := (cb + d.l.blockTrl + 63) / 64 * 64
+	raw, err := d.readAt(ib, n)
 	if err != nil {
 		return nil, err
 	}
+	t := raw[n-d.l.blockTrl:]
+	tbid := uint64(le32(t, 4))
+	if d.l.unicode {
+		tbid = le64(t, 8)
+	}
+	if int(le16(t, 0)) != cb || tbid&^1 != bid&^1 {
+		return nil, corrupt("block %#x: trailer does not match", bid)
+	}
+	b := raw[:cb]
 	if bid&2 == 0 {
 		switch d.crypt {
 		case 1:
@@ -343,26 +355,36 @@ func (d *ndb) blocks(bid uint64, max int64) ([][]byte, error) {
 	_, err = d.visit(bid, -1, func(b []byte) bool {
 		n += int64(len(b))
 		out = append(out, b)
-		return n <= max
+		return n <= total
 	})
-	if err == nil && n > max {
-		err = fmt.Errorf("%w: more than %d bytes", errTooBig, max)
+	if err == nil && n > total {
+		err = corrupt("data tree %#x holds more than its declared %d bytes", bid, total)
 	}
 	return out, err
 }
 
 // read returns at most limit bytes from the start of the data tree at bid,
-// and its declared total size.
+// and its declared total size. A full read (limit >= total) visits every
+// leaf and fails when they hold more than the declared total, so a tree
+// that repeats its subtrees cannot amplify reads.
 func (d *ndb) read(bid uint64, limit int64) ([]byte, int64, error) {
 	total, err := d.size(bid)
 	if err != nil || bid == 0 {
 		return nil, total, err
 	}
+	want := min(limit, total)
 	var out []byte
+	var sum int64
 	_, err = d.visit(bid, -1, func(b []byte) bool {
-		out = append(out, b[:min(int64(len(b)), limit-int64(len(out)))]...)
-		return int64(len(out)) < limit
+		if sum += int64(len(b)); sum > total {
+			return false
+		}
+		out = append(out, b[:min(int64(len(b)), want-int64(len(out)))]...)
+		return int64(len(out)) < want || limit >= total
 	})
+	if err == nil && sum > total {
+		err = corrupt("data tree %#x holds more than its declared %d bytes", bid, total)
+	}
 	return out, total, err
 }
 

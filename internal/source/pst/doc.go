@@ -21,7 +21,10 @@
 // Unicode (wVer 21-23) and ANSI (wVer 14/15) PSTs, unencoded or with
 // compressible (permute) or cyclic encoding. 4K-page OSTs (wVer 36) and
 // high-encryption files are refused by Open. CRCs and signatures are not
-// verified (page trailers' type and BID are); allocation maps and the
+// verified, but page trailers (type, BID) and block trailers (size, BID)
+// must match the B-tree entries, else that page or block fails. Data trees
+// may not hold more bytes than their declared total (lcbTotal), so a tree
+// repeating a subtree cannot amplify reads. Allocation maps and the
 // deleted-items list are ignored, so deleted data is never recovered.
 //
 // # Mapping
@@ -35,8 +38,12 @@
 // directly in the IPM subtree get the bare prefix. Sibling folders with the
 // same name merge in the tree.
 //
-// Messages are listed in contents table order; Locator.ID is the message
-// NID. Classes IPM.Note*, IPM.Post*, REPORT.*, IPM.Schedule.Meeting*,
+// Messages are listed in contents table order. Locator.ID holds the
+// message NID in its low 32 bits and a fingerprint in its high 32 bits:
+// CRC-32 of the PidTagCreationTime FILETIME followed by the Message-ID (or
+// the subject when there is none). Load, Raw and Attachment recompute it
+// and return ErrStale on a mismatch (a rewritten file reusing the NID), for
+// nodes that are not messages, and for non-mail items. Classes IPM.Note*, IPM.Post*, REPORT.*, IPM.Schedule.Meeting*,
 // IPM.(Outlook.)Recall* and empty/"IPM" are mail; everything else
 // (contacts, appointments, tasks, notes, ...) is counted and reported in
 // one warning. Unreadable messages are counted and reported in one warning
@@ -46,18 +53,25 @@
 //   - From: PR_SENT_REPRESENTING_*, else PR_SENDER_*; To/Cc/Bcc: the
 //     recipient table. Emails come from the SMTP address properties, or the
 //     email address when it holds an '@' and the address type is SMTP;
-//     Exchange (X.500) addresses without an SMTP form keep only the name.
+//     Exchange (X.500) addresses: PR_SMTP_ADDRESS, else PR_EMAIL_ADDRESS
+//     when it holds an '@' (whatever the address type), else the display
+//     name only.
 //     Transport headers (PR_TRANSPORT_MESSAGE_HEADERS) become
 //     Message.Header and fill what the properties lack (From/To/Cc/Bcc
 //     without emails, Message-ID, In-Reply-To, References, Date).
 //   - Date: PR_CLIENT_SUBMIT_TIME, else PR_MESSAGE_DELIVERY_TIME, else the
-//     Date header, else PR_CREATION_TIME; times outside 1970-2200 are
-//     missing.
+//     Date header, else PR_CREATION_TIME. FILETIMEs before 1970 or after
+//     2200 are treated as missing (zero), matching package mail's rule for
+//     Date headers; this also drops placeholder dates such as year 1601.
 //   - Bodies: PR_BODY as Text and PR_HTML as HTML (binary HTML is decoded
-//     with PR_INTERNET_CPID, else the message code page). Only when both
-//     are empty is PR_RTF_COMPRESSED used: RTF made from HTML (\fromhtml1)
-//     yields the de-encapsulated HTML ([MS-OXRTFEX]; \*\mhtmltag groups
-//     are dropped), other RTF its plain text. PtypString8 values use
+//     with PR_INTERNET_CPID, else the message code page). Then
+//     PR_RTF_COMPRESSED: Scan uses it only when both are empty (keeping
+//     Scan cheap); Load also when HTML is missing (RTF made from HTML,
+//     \fromhtml1, yields the de-encapsulated HTML of [MS-OXRTFEX]: \htmltag
+//     and \*\htmltag groups verbatim, text outside \htmlrtf runs, \par and
+//     \tab as newline and tab, \'hh in the \ansicpg code page, \uN;
+//     \*\mhtmltag groups are dropped) or Text is missing (other RTF gives
+//     its plain text). PtypString8 values use
 //     PR_MESSAGE_CODEPAGE (else PR_INTERNET_CPID), falling back to "UTF-8
 //     if valid, else windows-1252". Scan reads bounded prefixes (1 MiB of
 //     text, 4 MiB of HTML or compressed RTF); Load reads everything.
@@ -73,25 +87,45 @@
 //   - Attachments, in attachment table order (unreadable ones are left out
 //     everywhere, so indices stay stable): name from the long filename,
 //     short filename or display name; type from PR_ATTACH_MIME_TAG (else
-//     application/octet-stream); Inline when PR_ATTACH_CONTENT_ID is set.
+//     application/octet-stream). Inline needs PR_ATTACH_CONTENT_ID; an
+//     explicit PR_ATTACHMENT_HIDDEN false (a visible attachment that merely
+//     has a Content-ID, as some clients give every part) makes it a normal
+//     attachment unless PR_ATTACH_FLAGS has ATT_MHTML_REF (0x4).
 //     Embedded messages (method 5) are message/rfc822, named "<name>.eml"
 //     (the inner subject, NameGenerated, when unnamed), sized by
 //     PR_ATTACH_SIZE, and synthesised with mail.WriteEML (nested up to 4
 //     levels). Other unnamed attachments are "attachment-<i><ext>".
 //
 // Raw synthesises the message with mail.WriteEML. Load and Raw refuse
-// messages whose bodies plus attachment table sizes exceed
-// source.MaxMessageBytes; Attachment checks the size of that attachment.
-// Load, Raw and Attachment return ErrStale for locators that are not a
-// message node of the file.
+// messages whose bodies plus attachments exceed source.MaxMessageBytes,
+// counting each attachment as the larger of its claimed PR_ATTACH_SIZE and
+// its actual data size (embedded messages: the claim); Attachment checks
+// the size of that attachment. Synthesis (Raw, embedded .eml) writes
+// through a writer that fails with ErrTooLarge past the limit, so base64
+// growth or lying sizes never build an oversized message. S/MIME messages
+// (smime.p7m) are not unwrapped: the signed/encrypted blob is an
+// attachment.
+//
+// # Not validated against real files
+//
+// Third-party samples (see the task report) covered ANSI and Unicode
+// files, permute encoding, folders, plain/HTML/String8 bodies, transport
+// headers, real LZFu RTF to text, by-value and inline attachments. Only
+// synthetic pstgen files cover: cyclic encoding, XXBLOCK, SIBLOCK,
+// multi-level BTHs, embedded-message and OLE attachments, Keywords
+// categories, \fromhtml1 RTF, follow-up/verb/importance flags, and
+// Exchange (EX) addresses lacking SMTP forms when transport headers are
+// absent.
 //
 // # Limits on hostile input
 //
 // Every offset and size is bounds-checked against the file and its
-// structure. B-trees are at most 16 levels with strictly decreasing levels;
+// structure; every entry point (Open, Scan, Folders, Load, Raw,
+// Attachment, and each message within Scan) recovers from panics as a
+// last resort. B-trees are at most 16 levels with strictly decreasing levels;
 // data trees have the XBLOCK/XXBLOCK shape; a heap is at most 64 MiB, a
 // table row matrix 128 MiB and 1M rows, a subnode tree 1M entries, a BTH 8
-// levels and 1M records, a folder tree 64 levels and 100000 folders, RTF
+// levels and 1M records, a table row at least 4 bytes (the row ID), a folder tree 64 levels and 100000 folders, RTF
 // group nesting 1000 and its output 64 MiB. Each message is read under
 // recover, so a corrupt one fails alone.
 //

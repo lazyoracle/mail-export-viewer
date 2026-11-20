@@ -262,7 +262,8 @@ func (o *obj) table() (*table, error) {
 		return nil, corrupt("bad TCINFO")
 	}
 	end4, end2, end1, bm := int(le16(info, 2)), int(le16(info, 4)), int(le16(info, 6)), int(le16(info, 8))
-	if end4 > end2 || end2 > end1 || end1 > bm {
+	// A row holds at least the 4-byte row ID.
+	if end4 > end2 || end2 > end1 || end1 > bm || bm < 4 {
 		return nil, corrupt("bad TC row layout")
 	}
 	t := &table{o: o, cols: map[uint16]tcol{}, rowSize: bm, ceb: end1}
@@ -539,6 +540,9 @@ func (s propSet) time(id uint16) time.Time {
 	return filetime(le64(b, 0))
 }
 
+// filetime converts a FILETIME; values before 1970 or after about 2200 are
+// zero (missing), as package mail treats such dates, which also drops
+// placeholders like 1601-01-01.
 func filetime(ft uint64) time.Time {
 	const unixEpoch = 116444736000000000
 	const max = unixEpoch + 230*365*24*3600*10000000 // about 2200

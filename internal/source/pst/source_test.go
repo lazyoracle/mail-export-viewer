@@ -80,7 +80,7 @@ func TestSourceScan(t *testing.T) {
 	}
 	e := es[0]
 	e.Resolve()
-	if !reflect.DeepEqual(e.Labels, []string{"Red Category", "Project X"}) || e.Loc != (source.Locator{ID: uint64(f.Folders[0].Messages[0].NID)}) {
+	if !reflect.DeepEqual(e.Labels, []string{"Red Category", "Project X"}) || uint32(e.Loc.ID) != f.Folders[0].Messages[0].NID {
 		t.Errorf("entry 0: %+v", e)
 	}
 	if !e.Flags.Has(source.HasAttachment) || e.Msg.Text != "Hello Bob\nSecond line" || e.Msg.From.Email != "alice@example.com" {

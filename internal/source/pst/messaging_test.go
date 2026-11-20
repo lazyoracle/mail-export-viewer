@@ -21,6 +21,20 @@ func openFixture(t *testing.T, f *pstgen.File) *store {
 	return st
 }
 
+// mid is the Locator.ID (NID plus fingerprint) of message node nid.
+func mid(t *testing.T, st *store, nid uint32) uint64 {
+	t.Helper()
+	o, err := st.openNode(nid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := o.pc()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return locID(nid, fingerprint(msgProps(p)))
+}
+
 func folderPaths(t *testing.T, st *store) []string {
 	t.Helper()
 	fs, warns := st.folders()
@@ -58,7 +72,7 @@ func TestStoreFolders(t *testing.T) {
 func TestMessagePlain(t *testing.T) {
 	f := fixture(pstgen.CryptNone)
 	st := openFixture(t, f)
-	m, err := st.message(f.Folders[0].Messages[0].NID, true)
+	m, err := st.message(mid(t, st, f.Folders[0].Messages[0].NID), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,11 +115,11 @@ func TestMessagePlain(t *testing.T) {
 		t.Errorf("summary attachments %v %q", s.HasAttachment, s.AttachmentNames)
 	}
 
-	a, data, err := st.attachment(f.Folders[0].Messages[0].NID, 0)
+	a, data, err := st.attachment(mid(t, st, f.Folders[0].Messages[0].NID), 0)
 	if err != nil || a.Filename != "Quarterly report.pdf" || !bytes.Equal(data, blob(20000, 5)) {
 		t.Errorf("attachment 0: %+v %d %v", a, len(data), err)
 	}
-	a, data, err = st.attachment(f.Folders[0].Messages[0].NID, 2)
+	a, data, err = st.attachment(mid(t, st, f.Folders[0].Messages[0].NID), 2)
 	if err != nil || a.ContentType != "message/rfc822" {
 		t.Fatalf("embedded: %+v %v", a, err)
 	}
@@ -118,7 +132,7 @@ func TestMessagePlain(t *testing.T) {
 		t.Errorf("embedded attachment data %q", ad)
 	}
 	for _, i := range []int{-1, 3} {
-		if _, _, err := st.attachment(f.Folders[0].Messages[0].NID, i); !errors.Is(err, mail.ErrNotFound) {
+		if _, _, err := st.attachment(mid(t, st, f.Folders[0].Messages[0].NID), i); !errors.Is(err, mail.ErrNotFound) {
 			t.Errorf("attachment(%d) = %v", i, err)
 		}
 	}
@@ -127,7 +141,7 @@ func TestMessagePlain(t *testing.T) {
 func TestMessageHTMLAndFlags(t *testing.T) {
 	f := fixture(pstgen.CryptCyclic)
 	st := openFixture(t, f)
-	m, err := st.message(f.Folders[0].Messages[1].NID, true)
+	m, err := st.message(mid(t, st, f.Folders[0].Messages[1].NID), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +158,7 @@ func TestMessageHTMLAndFlags(t *testing.T) {
 		t.Errorf("summary text %q", m.Summary().Text)
 	}
 
-	contact, err := st.message(f.Folders[0].Messages[2].NID, false)
+	contact, err := st.scanMessage(f.Folders[0].Messages[2].NID)
 	if err != nil || isMail(contact.class) {
 		t.Errorf("contact: %q %v", contact.class, err)
 	}
@@ -153,7 +167,7 @@ func TestMessageHTMLAndFlags(t *testing.T) {
 func TestMessageRTF(t *testing.T) {
 	f := fixture(pstgen.CryptPermute)
 	st := openFixture(t, f)
-	m, err := st.message(f.Folders[0].Folders[0].Messages[0].NID, true)
+	m, err := st.message(mid(t, st, f.Folders[0].Folders[0].Messages[0].NID), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +180,7 @@ func TestMessageRTF(t *testing.T) {
 	if !reflect.DeepEqual(m.props, []source.Prop{{Key: "Importance", Value: "low"}}) {
 		t.Errorf("props = %v", m.props)
 	}
-	m, err = st.message(f.Folders[0].Folders[0].Messages[1].NID, true)
+	m, err = st.message(mid(t, st, f.Folders[0].Folders[0].Messages[1].NID), true)
 	if err != nil || m.Text != "Plain text\n" || m.HTML != "" || !isMail(m.class) {
 		t.Errorf("rtf text %q html %q class %q err %v", m.Text, m.HTML, m.class, err)
 	}
@@ -176,14 +190,14 @@ func TestMessageBigBody(t *testing.T) {
 	f := fixture(pstgen.CryptNone)
 	st := openFixture(t, f)
 	nid := f.Folders[1].Messages[0].NID
-	m, err := st.message(nid, false)
+	m, err := st.message(mid(t, st, nid), false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(m.Text) > scanTextLimit || !strings.HasPrefix(m.Text, "big body line\n") {
 		t.Errorf("scan text %d bytes", len(m.Text))
 	}
-	m, err = st.message(nid, true)
+	m, err = st.message(mid(t, st, nid), true)
 	if err != nil || len(m.Text) != 3<<20/15*14 {
 		t.Errorf("full text %d bytes, %v", len(m.Text), err)
 	}
@@ -193,7 +207,7 @@ func TestMessageStale(t *testing.T) {
 	f := fixture(pstgen.CryptNone)
 	st := openFixture(t, f)
 	for _, nid := range []uint32{0x7FFFFFE4, f.Folders[0].NID, 0x21} {
-		if _, err := st.message(nid, true); !errors.Is(err, source.ErrStale) {
+		if _, err := st.message(uint64(nid), true); !errors.Is(err, source.ErrStale) {
 			t.Errorf("message(%#x) = %v, want ErrStale", nid, err)
 		}
 	}

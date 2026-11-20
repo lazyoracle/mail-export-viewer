@@ -51,7 +51,12 @@ func TestRealMessages(t *testing.T) {
 					continue
 				}
 				for _, id := range ids {
-					m, err := st.message(id, true)
+					if sm, err := st.scanMessage(id); err == nil && !isMail(sm.class) {
+						classes[sm.class]++
+						continue
+					}
+					lid := mid(t, st, id)
+					m, err := st.message(lid, true)
 					if err != nil {
 						fails++
 						t.Logf("message %#x: %v", id, err)
@@ -82,7 +87,7 @@ func TestRealMessages(t *testing.T) {
 					}
 					for i := range m.Attachments {
 						atts++
-						if _, _, err := st.attachment(id, i); err != nil {
+						if _, _, err := st.attachment(lid, i); err != nil {
 							attFails++
 							t.Logf("attachment %#x/%d: %v", id, i, err)
 						}

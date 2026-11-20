@@ -39,7 +39,7 @@ func lzfu(b []byte, max int) ([]byte, error) {
 	var dict [4096]byte
 	copy(dict[:], lzfuPrebuf)
 	wpos := len(lzfuPrebuf)
-	out := make([]byte, 0, raw)
+	out := make([]byte, 0, min(raw, 1<<20)) // raw is only a claim
 	for i := 0; i < len(data); {
 		ctrl := data[i]
 		i++
@@ -250,10 +250,10 @@ func (c *rtfConverter) control(stack *[]rtfGroup, star *bool) {
 	wasStar := *star
 	*star = false
 	switch {
-	case word == "htmltag" && wasStar:
+	case word == "htmltag": // \*\htmltagN or \htmltagN
 		g.htmltag = true
 		return
-	case rtfSkipDest[word] || wasStar && word != "htmltag":
+	case rtfSkipDest[word] || wasStar:
 		g.skip = true
 		return
 	}

@@ -1,10 +1,8 @@
 package pst
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"math"
 	"os"
 	"path"
 	"path/filepath"
@@ -75,6 +73,7 @@ func (s *pstSource) Close() error     { return s.f.Close() }
 
 func (s *pstSource) store() (*store, error) {
 	s.once.Do(func() {
+		defer recovered(&s.stErr)
 		s.st, s.stErr = openStore(s.db)
 		if s.stErr != nil {
 			s.stErr = fmt.Errorf("%s: %w", s.path, s.stErr)
@@ -88,20 +87,26 @@ func (s *pstSource) folderPath(f folderRef) string {
 }
 
 // Folders lists every folder below the IPM subtree, empty ones included.
-func (s *pstSource) Folders() []string {
+func (s *pstSource) Folders() (out []string) {
+	defer func() {
+		if recover() != nil {
+			out = nil
+		}
+	}()
 	st, err := s.store()
 	if err != nil {
 		return nil
 	}
 	fs, _ := st.folders()
-	out := make([]string, 0, len(fs))
+	out = make([]string, 0, len(fs))
 	for _, f := range fs {
 		out = append(out, s.folderPath(f))
 	}
 	return out
 }
 
-func (s *pstSource) Scan(ctx context.Context, emit func(source.Entry) error, warn func(error)) error {
+func (s *pstSource) Scan(ctx context.Context, emit func(source.Entry) error, warn func(error)) (err error) {
+	defer recovered(&err)
 	st, err := s.store()
 	if err != nil {
 		return err
@@ -155,15 +160,11 @@ func (s *pstSource) Scan(ctx context.Context, emit func(source.Entry) error, war
 
 // entry reads message id for Scan; ok is false for non-mail items.
 func (s *pstSource) entry(st *store, f folderRef, id uint32) (e source.Entry, ok bool, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("%w: internal error: %v", errCorrupt, r)
-		}
-	}()
+	defer recovered(&err)
 	if id&0x1F != nidTypeMessage {
 		return e, false, nil
 	}
-	m, err := st.message(id, false)
+	m, err := st.scanMessage(id)
 	if err != nil {
 		return e, false, err
 	}
@@ -175,17 +176,18 @@ func (s *pstSource) entry(st *store, f folderRef, id uint32) (e source.Entry, ok
 		Labels: m.labels,
 		Flags:  m.flags,
 		Props:  m.props,
-		Loc:    source.Locator{ID: uint64(id)},
+		Loc:    source.Locator{ID: locID(id, m.fp)},
 		Msg:    m.Message.Summary(),
 	}, true, nil
 }
 
-// nid validates a locator.
-func nid(loc source.Locator) (uint32, error) {
-	if loc.ID > math.MaxUint32 || loc.Offset != 0 || loc.Length != 0 || loc.Name != "" {
+// locatorID validates a locator and returns its ID: the message NID in
+// the low 32 bits, its fingerprint in the high 32 bits.
+func locatorID(loc source.Locator) (uint64, error) {
+	if loc.Offset != 0 || loc.Length != 0 || loc.Name != "" {
 		return 0, fmt.Errorf("pst: locator %v: %w", loc, source.ErrStale)
 	}
-	return uint32(loc.ID), nil
+	return loc.ID, nil
 }
 
 func recovered(err *error) {
@@ -196,7 +198,7 @@ func recovered(err *error) {
 
 func (s *pstSource) Load(loc source.Locator) (m *mail.Message, err error) {
 	defer recovered(&err)
-	id, err := nid(loc)
+	id, err := locatorID(loc)
 	if err != nil {
 		return nil, err
 	}
@@ -213,7 +215,7 @@ func (s *pstSource) Load(loc source.Locator) (m *mail.Message, err error) {
 
 func (s *pstSource) Raw(loc source.Locator) (raw []byte, err error) {
 	defer recovered(&err)
-	id, err := nid(loc)
+	id, err := locatorID(loc)
 	if err != nil {
 		return nil, err
 	}
@@ -229,23 +231,12 @@ func (s *pstSource) Raw(loc source.Locator) (raw []byte, err error) {
 	if err != nil {
 		return nil, err
 	}
-	var buf bytes.Buffer
-	err = mail.WriteEML(&buf, &m.Message, func(i int) ([]byte, error) {
-		_, d, err := st.attachmentData(o, i, 0)
-		return d, err
-	})
-	if err != nil {
-		return nil, err
-	}
-	if buf.Len() > source.MaxMessageBytes {
-		return nil, fmt.Errorf("pst: message %#x: %w", id, source.ErrTooLarge)
-	}
-	return buf.Bytes(), nil
+	return st.writeEML(o, &m.Message, -1)
 }
 
 func (s *pstSource) Attachment(loc source.Locator, index int) (a mail.Attachment, data []byte, err error) {
 	defer recovered(&err)
-	id, err := nid(loc)
+	id, err := locatorID(loc)
 	if err != nil {
 		return a, nil, err
 	}

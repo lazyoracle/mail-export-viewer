@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"strconv"
 	"strings"
 	"time"
@@ -67,6 +68,9 @@ const (
 	pidAttachMimeTag       = 0x370E
 	pidAttachContentID     = 0x3712
 	pidSMTPAddress         = 0x39FE
+	pidAttachFlags         = 0x3714
+	pidAttachmentHidden    = 0x7FFE
+	attMHTMLRef            = 0x4
 	pidInternetCodepage    = 0x3FDE
 	pidMessageCodepage     = 0x3FFD
 	pidSenderSMTPAddress   = 0x5D01
@@ -278,11 +282,12 @@ type message struct {
 	flags  source.Flags
 	labels []string
 	props  []source.Prop
+	fp     uint32 // fingerprint, the high half of Locator.ID
 }
 
-// openMessage opens the top-level message node nid; anything that is not
-// a message node is stale.
-func (s *store) openMessage(nid uint32) (*obj, error) {
+// openNode opens the top-level message node nid; anything that is not a
+// message node is stale.
+func (s *store) openNode(nid uint32) (*obj, error) {
 	if nid&0x1F != nidTypeMessage {
 		return nil, fmt.Errorf("pst: node %#x is not a message: %w", nid, source.ErrStale)
 	}
@@ -296,14 +301,76 @@ func (s *store) openMessage(nid uint32) (*obj, error) {
 	return s.db.openObj(n.bidData, n.bidSub)
 }
 
-// message reads message nid. With full false (Scan) bodies are read only
-// up to bounded prefixes.
-func (s *store) message(nid uint32, full bool) (*message, error) {
-	o, err := s.openMessage(nid)
+// locID is the Locator.ID of message nid with fingerprint fp.
+func locID(nid, fp uint32) uint64 { return uint64(fp)<<32 | uint64(nid) }
+
+// openMessage opens the mail message a Locator.ID names: the NID in the
+// low 32 bits must be a message node whose fingerprint equals the high 32
+// bits and whose class is mail; otherwise the locator is stale.
+func (s *store) openMessage(id uint64) (*obj, error) {
+	o, err := s.openNode(uint32(id))
+	if err != nil {
+		return nil, err
+	}
+	p, err := o.pc()
+	if err != nil {
+		return nil, err
+	}
+	ps := msgProps(p)
+	if fingerprint(ps) != uint32(id>>32) {
+		return nil, fmt.Errorf("pst: message %#x changed: %w", uint32(id), source.ErrStale)
+	}
+	if !isMail(ps.str(pidMessageClass)) {
+		return nil, fmt.Errorf("pst: item %#x is not mail: %w", uint32(id), source.ErrStale)
+	}
+	return o, nil
+}
+
+// msgProps gives typed access to a message PC, with PtypString8 values
+// decoded by the message code page (else the internet code page).
+func msgProps(p *pc) propSet {
+	ps := p.set("")
+	cp, _ := ps.int(pidMessageCodepage)
+	if cp == 0 {
+		cp, _ = ps.int(pidInternetCodepage)
+	}
+	ps.cs = cpCharset(int(cp))
+	return ps
+}
+
+// fingerprint identifies a message beyond its NID (which a rewritten file
+// may reuse): CRC-32 of its PidTagCreationTime FILETIME and its
+// Message-ID, or its subject when it has none.
+func fingerprint(ps propSet) uint32 {
+	var b []byte
+	if v, ok := ps.get(pidCreationTime); ok && v.typ == ptTime {
+		b, _, _ = ps.o.data(v, 8)
+	}
+	key := ps.str(pidInternetMessageID)
+	if key == "" {
+		key = ps.str(pidSubject)
+	}
+	return crc32.ChecksumIEEE(append(append([]byte(nil), b...), key...))
+}
+
+// message reads the message a Locator.ID names. With full false bodies
+// are read only up to bounded prefixes.
+func (s *store) message(id uint64, full bool) (*message, error) {
+	o, err := s.openMessage(id)
 	if err != nil {
 		return nil, err
 	}
 	return s.readMessage(o, full)
+}
+
+// scanMessage reads message node nid for Scan (no fingerprint or class
+// check; bounded bodies).
+func (s *store) scanMessage(nid uint32) (*message, error) {
+	o, err := s.openNode(nid)
+	if err != nil {
+		return nil, err
+	}
+	return s.readMessage(o, false)
 }
 
 func (s *store) readMessage(o *obj, full bool) (*message, error) {
@@ -311,14 +378,9 @@ func (s *store) readMessage(o *obj, full bool) (*message, error) {
 	if err != nil {
 		return nil, err
 	}
-	ps := p.set("")
-	cp, _ := ps.int(pidMessageCodepage)
+	ps := msgProps(p)
 	icp, _ := ps.int(pidInternetCodepage)
-	if cp == 0 {
-		cp = icp
-	}
-	ps.cs = cpCharset(int(cp))
-	m := &message{class: ps.str(pidMessageClass)}
+	m := &message{class: ps.str(pidMessageClass), fp: fingerprint(ps)}
 	if full {
 		if err := s.checkSize(o, ps); err != nil {
 			return nil, err
@@ -328,9 +390,9 @@ func (s *store) readMessage(o *obj, full bool) (*message, error) {
 	m.MessageID = trimID(ps.str(pidInternetMessageID))
 	m.InReplyTo = trimID(ps.str(pidInReplyTo))
 	m.References = mail.ParseMessageIDs(ps.str(pidInternetReferences))
-	m.From = address(ps.str(pidSentReprName), ps.str(pidSentReprSMTPAddress), ps.str(pidSentReprEmail), ps.str(pidSentReprAddrType))
+	m.From = address(ps.str(pidSentReprName), ps.str(pidSentReprSMTPAddress), ps.str(pidSentReprEmail))
 	if m.From == (mail.Address{}) {
-		m.From = address(ps.str(pidSenderName), ps.str(pidSenderSMTPAddress), ps.str(pidSenderEmail), ps.str(pidSenderAddrType))
+		m.From = address(ps.str(pidSenderName), ps.str(pidSenderSMTPAddress), ps.str(pidSenderEmail))
 	}
 	s.recipients(o, &m.Message, ps.cs)
 	m.Date = ps.time(pidClientSubmitTime)
@@ -359,10 +421,10 @@ func (s *store) checkSize(o *obj, ps propSet) error {
 		n, _ := ps.size(id)
 		total += n
 	}
-	for _, a := range s.attachmentRefs(o) {
-		total += a.size
+	for _, a := range s.attachments(o) {
+		total += max(a.claimed, a.Size) // the claimed size may lie
 	}
-	if total > source.MaxMessageBytes {
+	if total > maxMessage {
 		return fmt.Errorf("pst: message of %d bytes: %w", total, source.ErrTooLarge)
 	}
 	return nil
@@ -385,14 +447,16 @@ func trimID(s string) string {
 	return strings.TrimSpace(strings.Trim(strings.TrimSpace(s), "<>"))
 }
 
-// address picks the SMTP address of a sender or recipient; Exchange
-// (X.500) addresses without an SMTP form leave Email empty.
-func address(name, smtp, email, addrType string) mail.Address {
+// address picks the email of a sender or recipient: the SMTP address
+// property, else the email address when it holds an '@' (whatever the
+// address type); Exchange (X.500) addresses without either keep only the
+// display name.
+func address(name, smtp, email string) mail.Address {
 	a := mail.Address{Name: strings.TrimSpace(name)}
 	switch {
 	case strings.Contains(smtp, "@"):
 		a.Email = strings.TrimSpace(smtp)
-	case strings.Contains(email, "@") && (addrType == "" || strings.EqualFold(addrType, "SMTP")):
+	case strings.Contains(email, "@"):
 		a.Email = strings.TrimSpace(email)
 	}
 	if a.Name == a.Email {
@@ -415,7 +479,7 @@ func (s *store) recipients(o *obj, m *mail.Message, cs string) {
 	}
 	for i := 0; i < t.len(); i++ {
 		r := t.set(i, cs)
-		a := address(r.str(pidDisplayName), r.str(pidSMTPAddress), r.str(pidEmailAddress), r.str(pidAddrType))
+		a := address(r.str(pidDisplayName), r.str(pidSMTPAddress), r.str(pidEmailAddress))
 		if a == (mail.Address{}) {
 			continue
 		}
@@ -470,12 +534,14 @@ func hasEmail(as []mail.Address) bool {
 	return false
 }
 
-// bodies sets Text and HTML from PR_BODY, PR_HTML and, when one is
-// missing, PR_RTF_COMPRESSED.
+// bodies sets Text and HTML from PR_BODY and PR_HTML, then from
+// PR_RTF_COMPRESSED: on Scan only when both are empty (keeping Scan
+// cheap), on Load also when HTML is missing (RTF made from HTML) or Text is
+// (other RTF).
 func (s *store) bodies(ps propSet, m *mail.Message, icp int, full bool) {
 	textLim, htmlLim, rtfLim := int64(scanTextLimit), int64(scanHTMLLimit), int64(scanRTFLimit)
 	if full {
-		textLim, htmlLim, rtfLim = source.MaxMessageBytes, source.MaxMessageBytes, source.MaxMessageBytes
+		textLim, htmlLim, rtfLim = maxMessage, maxMessage, maxMessage
 	}
 	if v, ok := ps.get(pidBody); ok {
 		b, _ := ps.prefix(pidBody, textLim*2)
@@ -496,10 +562,17 @@ func (s *store) bodies(ps propSet, m *mail.Message, icp int, full bool) {
 			m.HTML = decodeString(v.typ, b, ps.cs)
 		}
 	}
-	if strings.TrimSpace(m.Text) == "" && strings.TrimSpace(m.HTML) == "" {
+	noText, noHTML := strings.TrimSpace(m.Text) == "", strings.TrimSpace(m.HTML) == ""
+	if noText && noHTML || full && (noText || noHTML) {
 		if b := ps.bin(pidRTFCompressed, rtfLim); b != nil {
-			if rtf, err := lzfu(b, int(min(rtfLim*4, source.MaxMessageBytes))); err == nil {
-				m.HTML, m.Text = rtfConvert(rtf)
+			if rtf, err := lzfu(b, int(min(rtfLim*4, maxMessage))); err == nil {
+				html, text := rtfConvert(rtf)
+				if noHTML {
+					m.HTML = html
+				}
+				if noText {
+					m.Text = text
+				}
 			}
 		}
 	}
@@ -591,9 +664,10 @@ func (s *store) attachmentRefs(o *obj) []attRef {
 // attachment is an opened attachment object.
 type attachment struct {
 	mail.Attachment
-	o      *obj
-	ps     propSet
-	method int64
+	o       *obj
+	ps      propSet
+	method  int64
+	claimed int64 // PidTagAttachSize from the attachment table
 }
 
 // Attachment methods.
@@ -616,7 +690,7 @@ func (s *store) attachments(o *obj) []attachment {
 			continue
 		}
 		ps := p.set("")
-		a := attachment{o: ao, ps: ps}
+		a := attachment{o: ao, ps: ps, claimed: r.size}
 		a.Index = len(out)
 		a.method, _ = ps.int(pidAttachMethod)
 		a.Filename = strings.TrimSpace(ps.str(pidAttachLongFilename))
@@ -628,7 +702,7 @@ func (s *store) attachments(o *obj) []attachment {
 		}
 		a.ContentType = strings.ToLower(strings.TrimSpace(ps.str(pidAttachMimeTag)))
 		a.ContentID = trimID(ps.str(pidAttachContentID))
-		a.Inline = a.ContentID != ""
+		a.Inline = inline(a.ContentID, ps)
 		if a.method == attachEmbedded {
 			a.ContentType = "message/rfc822"
 			if a.Filename == "" {
@@ -660,6 +734,21 @@ func (s *store) attachments(o *obj) []attachment {
 		out = append(out, a)
 	}
 	return out
+}
+
+// inline decides Attachment.Inline: a Content-ID is required, and an
+// explicit PR_ATTACHMENT_HIDDEN false (a visible attachment, e.g. from
+// clients that give every part a Content-ID) makes it a real attachment
+// unless PR_ATTACH_FLAGS has ATT_MHTML_REF (referenced from the HTML).
+func inline(cid string, ps propSet) bool {
+	if cid == "" {
+		return false
+	}
+	flags, _ := ps.int(pidAttachFlags)
+	if v, ok := ps.int(pidAttachmentHidden); ok && v == 0 && flags&attMHTMLRef == 0 {
+		return false
+	}
+	return true
 }
 
 func (s *store) attachmentList(o *obj) []mail.Attachment {
@@ -710,12 +799,39 @@ func (s *store) attachSize(a attachment) (int64, error) {
 
 // attachment returns attachment i of message nid with its bytes; embedded
 // messages are synthesised as .eml.
-func (s *store) attachment(nid uint32, i int) (mail.Attachment, []byte, error) {
-	o, err := s.openMessage(nid)
+func (s *store) attachment(id uint64, i int) (mail.Attachment, []byte, error) {
+	o, err := s.openMessage(id)
 	if err != nil {
 		return mail.Attachment{}, nil, err
 	}
 	return s.attachmentData(o, i, 0)
+}
+
+// maxMessage is source.MaxMessageBytes (a variable for tests).
+var maxMessage int64 = source.MaxMessageBytes
+
+// limitWriter buffers a synthesised message and fails with ErrTooLarge
+// once it would exceed maxMessage, so huge messages are never built.
+type limitWriter struct{ buf bytes.Buffer }
+
+func (w *limitWriter) Write(p []byte) (int, error) {
+	if int64(w.buf.Len()+len(p)) > maxMessage {
+		return 0, fmt.Errorf("pst: synthesised message over %d bytes: %w", maxMessage, source.ErrTooLarge)
+	}
+	return w.buf.Write(p)
+}
+
+// writeEML synthesises m (whose attachments live in o) within maxMessage.
+func (s *store) writeEML(o *obj, m *mail.Message, depth int) ([]byte, error) {
+	var w limitWriter
+	err := mail.WriteEML(&w, m, func(j int) ([]byte, error) {
+		_, d, err := s.attachmentData(o, j, depth+1)
+		return d, err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return w.buf.Bytes(), nil
 }
 
 func (s *store) attachmentData(o *obj, i, depth int) (mail.Attachment, []byte, error) {
@@ -736,21 +852,14 @@ func (s *store) attachmentData(o *obj, i, depth int) (mail.Attachment, []byte, e
 		if err != nil {
 			return a.Attachment, nil, err
 		}
-		var buf bytes.Buffer
-		err = mail.WriteEML(&buf, &inner.Message, func(j int) ([]byte, error) {
-			_, d, err := s.attachmentData(em, j, depth+1)
-			return d, err
-		})
-		if buf.Len() > source.MaxMessageBytes {
-			return a.Attachment, nil, fmt.Errorf("pst: embedded message: %w", source.ErrTooLarge)
-		}
-		return a.Attachment, buf.Bytes(), err
+		data, err := s.writeEML(em, &inner.Message, depth)
+		return a.Attachment, data, err
 	}
 	size, err := s.attachSize(a)
 	if err != nil {
 		return a.Attachment, nil, err
 	}
-	if size > source.MaxMessageBytes {
+	if size > maxMessage {
 		return a.Attachment, nil, fmt.Errorf("pst: attachment of %d bytes: %w", size, source.ErrTooLarge)
 	}
 	var data []byte
@@ -759,12 +868,12 @@ func (s *store) attachmentData(o *obj, i, depth int) (mail.Attachment, []byte, e
 		if err != nil {
 			return a.Attachment, nil, err
 		}
-		data, _, err = s.db.read(sn.bidData, source.MaxMessageBytes)
+		data, _, err = s.db.read(sn.bidData, maxMessage)
 		if err != nil {
 			return a.Attachment, nil, err
 		}
 	} else {
-		data = a.ps.bin(pidAttachData, source.MaxMessageBytes)
+		data = a.ps.bin(pidAttachData, maxMessage)
 	}
 	return a.Attachment, data, nil
 }

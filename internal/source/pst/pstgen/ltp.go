@@ -173,6 +173,19 @@ func (h *heapBuilder) finish(root uint32) [][]byte {
 	return out
 }
 
+// Heap builds a raw heap-on-node with client signature sig whose
+// allocations are allocs (in one page: allocation k has HID (k+1)<<5) and
+// whose user root is the last allocation. It is for crafting hostile
+// structures.
+func Heap(sig byte, allocs ...[]byte) Built {
+	h := &heapBuilder{sig: sig}
+	var root uint32
+	for _, a := range allocs {
+		root = h.alloc(a)
+	}
+	return Built{Blocks: h.finish(root)}
+}
+
 // bth writes a BTH over sorted records (key followed by data) and returns
 // the HID of its header.
 func (h *heapBuilder) bth(cbKey, cbEnt int, recs [][]byte) uint32 {
