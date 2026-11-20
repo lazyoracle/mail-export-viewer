@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -951,11 +952,75 @@ func TestTagColorsValidated(t *testing.T) {
 }
 
 func TestLoadWeight(t *testing.T) {
+	const max = int64(source.MaxMessageBytes)
 	for _, c := range []struct{ length, factor, want int64 }{
-		{1000, 1, 1000}, {1000, 3, 3000}, {0, 1, unknownSize}, {0, 3, 3 * unknownSize},
+		{1000, 1, 1000}, {1000, 3, 3000},
+		// Unknown sizes weigh the most a source may materialise.
+		{0, 1, max}, {0, 3, 3 * max},
+		// A claimed length over the limit cannot be loaded beyond it.
+		{2 * max, 1, max},
 	} {
 		if got := loadWeight(c.length, c.factor); got != c.want {
 			t.Errorf("loadWeight(%d, %d) = %d, want %d", c.length, c.factor, got, c.want)
+		}
+	}
+	if loadBudget < loadWeight(0, 3) {
+		t.Fatalf("budget %d smaller than one worst-case request %d", loadBudget, loadWeight(0, 3))
+	}
+}
+
+func TestLoadBudgetBusy(t *testing.T) {
+	f := newFixture(t, func(c *Config) { c.loadWait = 20 * time.Millisecond })
+	// Held so that even one copy of a message of unknown size (OLM) no
+	// longer fits.
+	held := int64(loadBudget - source.MaxMessageBytes + 1)
+	if err := f.srv.sem.acquire(context.Background(), held); err != nil {
+		t.Fatal(err)
+	}
+	olm := itoa(f.id("Outlook budget"))
+	for _, p := range []string{"/api/messages/" + olm, "/api/messages/" + olm + "/raw"} {
+		rec := f.do("GET", p)
+		var e struct{ Code string }
+		jsonDecode(rec.Body.Bytes(), &e)
+		if rec.Code != http.StatusServiceUnavailable || e.Code != codeBusy || rec.Header().Get("Retry-After") == "" {
+			t.Fatalf("%s: %d %q Retry-After %q", p, rec.Code, e.Code, rec.Header().Get("Retry-After"))
+		}
+	}
+	// A small mbox message (known length) still fits.
+	if rec := f.do("GET", "/api/messages/"+itoa(f.id("Plain hello"))); rec.Code != http.StatusOK {
+		t.Fatalf("mbox message: %d", rec.Code)
+	}
+	f.srv.sem.release(held)
+	if rec := f.do("GET", "/api/messages/"+olm); rec.Code != http.StatusOK {
+		t.Fatalf("after release: %d", rec.Code)
+	}
+	if used := f.srv.sem.inUse(); used != 0 {
+		t.Fatalf("%d bytes still reserved", used)
+	}
+}
+
+// usedAtWrite records the load budget in use when the body is written.
+type usedAtWrite struct {
+	*httptest.ResponseRecorder
+	sem  *byteSem
+	used int64
+}
+
+func (w *usedAtWrite) Write(b []byte) (int, error) {
+	w.used = w.sem.inUse()
+	return w.ResponseRecorder.Write(b)
+}
+
+func TestLoadBudgetShrinksWhileWriting(t *testing.T) {
+	f := newFixture(t)
+	olm := itoa(f.id("Outlook budget"))
+	for _, p := range []string{"/api/messages/" + olm + "/raw", "/api/messages/" + olm + "/attachments/0"} {
+		req := httptest.NewRequest("GET", p, nil)
+		req.Host = "127.0.0.1:8080"
+		w := &usedAtWrite{ResponseRecorder: httptest.NewRecorder(), sem: f.srv.sem}
+		f.h.ServeHTTP(w, req)
+		if w.Code != http.StatusOK || w.used != int64(w.Body.Len()) {
+			t.Fatalf("%s: %d; %d bytes reserved while writing %d", p, w.Code, w.used, w.Body.Len())
 		}
 	}
 }

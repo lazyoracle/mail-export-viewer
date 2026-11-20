@@ -76,12 +76,22 @@
 //   - Threads are capped at 5000 rows (truncated:true; the requested
 //     message is always included; threadCount is the full size).
 //   - Tag colours are passed on only as "#RRGGBB", else "".
-//   - Message bytes held by concurrent loads are bounded by a 512 MiB
-//     budget. A request weighs the message size (Loc.Length when known,
-//     else 32 MiB) times the copies it may hold: 1 for raw and
-//     attachments, 3 for the detail view and cid (Load's parse, plus Raw
-//     and its parse for cid inlining). Text and HTML in a detail are
-//     capped at 8 MiB each (flagged truncated), headers at 1000.
+//   - Message bytes held by concurrent loads are bounded by a 768 MiB
+//     budget (three times source.MaxMessageBytes, so one worst-case
+//     request fits). A request weighs the message size times the copies
+//     it may hold: 1 for raw and attachments, 3 for the detail view and
+//     cid (Load's parse, plus Raw and its parse for cid inlining). The
+//     size is Loc.Length for mbox (the reader reads exactly that range);
+//     for the other formats, whose sizes are not known before reading (or
+//     only claimed by the file), it is the 256 MiB a source may
+//     materialise at most. So a detail view of a PST, OLM or .eml message
+//     takes the whole budget while it is read: such views are served one
+//     at a time, which is fast for ordinary messages. Raw, attachment and
+//     cid responses drop their reservation to the bytes they send once
+//     read, so a slow download does not block other requests. A request
+//     that cannot get its budget within 15 s is answered 503 "busy" with
+//     Retry-After: 5. Text and HTML in a detail are capped at 8 MiB each
+//     (flagged truncated), headers at 1000.
 //   - HEAD on raw/attachment/cid re-reads the message like GET (the
 //     length is only known after reading; net/http drops the body).
 //   - Config.UI is meant to be the embed.FS of internal/web: files are

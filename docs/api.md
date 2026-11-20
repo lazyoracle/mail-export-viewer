@@ -64,6 +64,7 @@ Every error is JSON with a fixed, path-free message and a stable `code`:
 | 413 | `too_large` | The message is over 256 MiB. It is listed but cannot be opened. |
 | 414 | `uri_too_long` | The path is over 4 KiB or the query string is over 8 KiB. |
 | 500 | `internal` | Unexpected error. The details go to the server log only. |
+| 503 | `busy` | Other requests are reading large messages and the memory budget stayed full for 15 s. Sent with `Retry-After: 5`; retry. |
 | 503 | `unavailable` | The request was cancelled while waiting for memory budget. |
 
 ### Security headers (all responses)

@@ -53,8 +53,10 @@ type Config struct {
 	// reach clients). Nil means log.Default().
 	Logger *log.Logger
 
-	// Test hooks: cid inlining limits (0 means the defaults).
+	// Test hooks: cid inlining limits and the load-budget wait (0 means
+	// the defaults).
 	inlinePart, inlineTotal int
+	loadWait                time.Duration
 }
 
 // Server is the HTTP handler of the viewer: the JSON API under /api/ and
@@ -73,6 +75,7 @@ type Server struct {
 	inlinePart     int
 	inlineTotal    int
 	sem            *byteSem
+	loadWait       time.Duration
 	stats          statsCache
 	handler        http.Handler
 }
@@ -82,8 +85,13 @@ const (
 	defaultInlinePart  = 1 << 20
 	defaultInlineTotal = 4 << 20
 	// loadBudget bounds the message bytes held by concurrent requests that
-	// re-read messages from their sources (see byteSem).
-	loadBudget = 512 << 20
+	// re-read messages from their sources (see byteSem and loadWeight). It
+	// fits one worst-case request: three copies of a message of the
+	// largest size a source materialises.
+	loadBudget = 3 * source.MaxMessageBytes
+	// defaultLoadWait is how long a request waits for load budget before
+	// it is answered 503 (busy) with Retry-After.
+	defaultLoadWait = 15 * time.Second
 	// maxHeaderBytes bounds the request line plus headers.
 	maxHeaderBytes = 64 << 10
 )
@@ -101,7 +109,10 @@ func New(cfg Config) (*Server, error) {
 		st: cfg.Store, srcs: map[string]source.Source{}, root: cfg.Root, ui: cfg.UI,
 		hosts: newHostSet(cfg.AllowedHosts), version: cfg.Version, inputWarnings: cfg.InputWarnings, includeDeleted: cfg.IncludeDeleted,
 		log: cfg.Logger, cidKey: key, inlinePart: cfg.inlinePart, inlineTotal: cfg.inlineTotal,
-		sem: newByteSem(loadBudget),
+		sem: newByteSem(loadBudget), loadWait: cfg.loadWait,
+	}
+	if s.loadWait <= 0 {
+		s.loadWait = defaultLoadWait
 	}
 	if s.log == nil {
 		s.log = log.Default()

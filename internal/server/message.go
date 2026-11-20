@@ -24,26 +24,46 @@ const (
 	maxBodyText = 8 << 20
 	// maxHeaders caps the header fields listed in a message's JSON.
 	maxHeaders = 1000
-	// unknownSize is the load-budget weight of a message whose size the
-	// index does not know (formats without byte ranges).
-	unknownSize = 32 << 20
 )
 
 // loaded is a message located through the index, with its source. release
 // must be called when done: until then the message counts against the
 // load budget.
 type loaded struct {
-	id      int64
-	m       index.Message
-	src     source.Source
-	release func()
+	id     int64
+	m      index.Message
+	src    source.Source
+	sem    *byteSem
+	weight int64 // budget held; 0 after release
 }
 
-// loadWeight is the load-budget weight of a message of length bytes (0:
-// unknown) read factor times over at once.
+// release returns the budget held for l. It may be called more than once.
+func (l *loaded) release() {
+	if l.weight > 0 {
+		l.sem.release(l.weight)
+		l.weight = 0
+	}
+}
+
+// shrink lowers the budget held for l to n bytes (what the request still
+// holds once a message has been read and only its result is kept, e.g.
+// while a download is written to a slow client).
+func (l *loaded) shrink(n int64) {
+	n = l.sem.clamp(n)
+	if l.weight > n {
+		l.sem.release(l.weight - n)
+		l.weight = n
+	}
+}
+
+// loadWeight is the load-budget weight of a message of length bytes read
+// factor times over at once. Only mbox byte ranges give a length (the
+// reader reads exactly that range); other formats (0) and lengths over the
+// limit weigh source.MaxMessageBytes, the most a source materialises for
+// one message, so the budget holds whatever the files claim.
 func loadWeight(length, factor int64) int64 {
-	if length <= 0 {
-		length = unknownSize
+	if length <= 0 || length > source.MaxMessageBytes {
+		length = source.MaxMessageBytes
 	}
 	return length * factor
 }
@@ -66,12 +86,16 @@ func (s *Server) load(r *http.Request, idText string, factor int64) (*loaded, er
 	if !ok {
 		return nil, errSourceGone
 	}
-	weight := loadWeight(m.Loc.Length, factor)
-	if err := s.sem.acquire(r.Context(), weight); err != nil {
+	weight := s.sem.clamp(loadWeight(m.Loc.Length, factor))
+	ctx, cancel := context.WithTimeout(r.Context(), s.loadWait)
+	defer cancel()
+	if err := s.sem.acquire(ctx, weight); err != nil {
+		if r.Context().Err() == nil {
+			return nil, errBusy
+		}
 		return nil, err
 	}
-	var once sync.Once
-	return &loaded{id: id, m: m, src: src, release: func() { once.Do(func() { s.sem.release(weight) }) }}, nil
+	return &loaded{id: id, m: m, src: src, sem: s.sem, weight: weight}, nil
 }
 
 func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request, idText string) {
@@ -185,6 +209,7 @@ func (s *Server) handleRaw(w http.ResponseWriter, r *http.Request, idText string
 		s.fail(w, err)
 		return
 	}
+	l.shrink(int64(len(raw)))
 	name := truncateBytes(safeFilename(l.m.Subject), 100)
 	if name == "" {
 		name = fmt.Sprintf("message-%d", l.id)
@@ -220,6 +245,7 @@ func (s *Server) handleAttachment(w http.ResponseWriter, r *http.Request, idText
 		s.fail(w, err)
 		return
 	}
+	l.shrink(int64(len(data)))
 	serveAttachment(w, a, data, inline == "1")
 }
 
@@ -257,11 +283,13 @@ func (s *Server) handleCID(w http.ResponseWriter, r *http.Request, idText, token
 		s.fail(w, mail.ErrNotFound)
 		return
 	}
+	msg = nil
 	a, data, err := l.src.Attachment(l.m.Loc, a.Index)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
+	l.shrink(int64(len(data)))
 	serveAttachment(w, a, data, true)
 }
 
@@ -406,6 +434,13 @@ func newByteSem(capacity int64) *byteSem {
 }
 
 func (s *byteSem) clamp(n int64) int64 { return min(max(n, 1), s.cap) }
+
+// inUse returns the bytes currently held.
+func (s *byteSem) inUse() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.used
+}
 
 // acquire waits until n bytes are free or ctx is done.
 func (s *byteSem) acquire(ctx context.Context, n int64) error {

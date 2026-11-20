@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io/fs"
 	"net/http"
+	"strconv"
 
 	"github.com/lazyoracle/mail-export-viewer/internal/index"
 	"github.com/lazyoracle/mail-export-viewer/internal/mail"
@@ -23,6 +24,7 @@ const (
 	codeStale         = "stale"
 	codeTooLarge      = "too_large"
 	codeUnavailable   = "unavailable"
+	codeBusy          = "busy"
 	codeInternal      = "internal"
 )
 
@@ -50,10 +52,12 @@ func writeError(w http.ResponseWriter, status int, code, msg string) {
 	w.Write(append(b, '\n'))
 }
 
-// apiError carries an HTTP status, code and client-safe message.
+// apiError carries an HTTP status, code and client-safe message, and for
+// 503 responses the Retry-After seconds (0: none).
 type apiError struct {
-	status    int
-	code, msg string
+	status     int
+	code, msg  string
+	retryAfter int
 }
 
 func (e *apiError) Error() string { return e.msg }
@@ -61,6 +65,10 @@ func (e *apiError) Error() string { return e.msg }
 func badRequest(msg string) error {
 	return &apiError{status: http.StatusBadRequest, code: codeBadRequest, msg: msg}
 }
+
+// errBusy answers a request that could not get load budget in time.
+var errBusy = &apiError{status: http.StatusServiceUnavailable, code: codeBusy, retryAfter: 5,
+	msg: "the viewer is busy reading other large messages; try again shortly"}
 
 var errSourceGone = &apiError{status: http.StatusGone, code: codeGone,
 	msg: "the file this message came from is not available any more; reindex to refresh"}
@@ -72,6 +80,9 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 	var ae *apiError
 	switch {
 	case errors.As(err, &ae):
+		if ae.retryAfter > 0 {
+			w.Header().Set("Retry-After", strconv.Itoa(ae.retryAfter))
+		}
 		writeError(w, ae.status, ae.code, ae.msg)
 	case errors.Is(err, index.ErrNotFound):
 		writeError(w, http.StatusNotFound, codeNotFound, "message not found (the index may have been rebuilt)")
