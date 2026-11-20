@@ -314,11 +314,11 @@ func serve(ctx context.Context, cfg config, stderr io.Writer, h hooks) error {
 	if err != nil {
 		return err
 	}
-	lock, err := acquireCacheLock(db)
+	lock, err := lockInstance(db)
 	if err != nil {
 		return err
 	}
-	defer lock.release()
+	defer lock.Release()
 	ln, err := listen(cfg.addr, cfg.addrExplicit, cfg.allowRemote)
 	if err != nil {
 		return err
@@ -366,7 +366,7 @@ func serve(ctx context.Context, cfg config, stderr io.Writer, h hooks) error {
 		urlHost = net.JoinHostPort("localhost", port)
 	}
 	url := "http://" + urlHost + "/"
-	lock.record(fmt.Sprintf("pid %d, %s", os.Getpid(), url))
+	lock.Record(fmt.Sprintf("pid %d, %s", os.Getpid(), url))
 	fmt.Fprintf(stderr, "%s: %s (%d inputs; indexing in the background)\n", prog, url, len(srcs))
 	if h.ready != nil {
 		h.ready(addr)
@@ -490,6 +490,25 @@ func clean(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// lockInstance takes the instance lock "<db>.run" without waiting. It is
+// separate from the index's own "<db>.lock" (a second flock on that file
+// would collide with index.Open's) and keeps a second instance, or a
+// -reindex run, from using the same cache while this one runs. The lock
+// records this instance's pid and URL; a refused instance quotes them.
+func lockInstance(db string) (*index.FileLock, error) {
+	l, err := index.AcquireLock(db + ".run")
+	switch {
+	case errors.Is(err, index.ErrLocked):
+		owner := strings.TrimPrefix(err.Error(), index.ErrLocked.Error())
+		return nil, fmt.Errorf("already running for this input%s; stop that instance first, or use a different -cache-dir", owner)
+	case errors.Is(err, index.ErrNotRegular):
+		return nil, fmt.Errorf("instance lock %s.run is not a regular file (a symlink?); remove it", db)
+	case err != nil:
+		return nil, fmt.Errorf("cannot lock the cache: %w", err)
+	}
+	return l, nil
 }
 
 // canonicalPath returns the absolute, symlink-resolved form of input (the

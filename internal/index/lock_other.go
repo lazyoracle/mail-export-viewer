@@ -2,15 +2,21 @@
 
 package index
 
-// fileLock only creates the lock file on platforms other than macOS and
+// FileLock only creates the lock file on platforms other than macOS and
 // Linux (not release targets): concurrent instances are not detected.
-type fileLock struct{}
+type FileLock struct{}
 
-func acquireLock(path string) (*fileLock, error) {
+// AcquireLock creates the lock file at path (mode 0600, never through a
+// symlink) without locking it.
+func AcquireLock(path string) (*FileLock, error) {
 	if err := openPrivate(path, true); err != nil {
 		return nil, err
 	}
-	return &fileLock{}, nil
+	return &FileLock{}, nil
 }
 
-func (*fileLock) release() {}
+// Record does nothing on this platform.
+func (*FileLock) Record(string) {}
+
+// Release does nothing on this platform.
+func (*FileLock) Release() {}

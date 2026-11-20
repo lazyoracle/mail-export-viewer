@@ -146,7 +146,9 @@
 // in TMPDIR. Reset drops everything, vacuums and truncates the WAL,
 // so no indexed text stays on disk. The
 // lock is an exclusive flock held until Close (released by the kernel if
-// the process dies). A database SQLite reports corrupt or not-a-database
+// the process dies). AcquireLock (FileLock) is that lock, exported so the
+// command's instance lock ("<db>.run", holding the running instance's pid
+// and URL) is the same implementation. A database SQLite reports corrupt or not-a-database
 // at Open, or of another schema version, is rebuilt from scratch;
 // corruption found later surfaces as errors.
 package index

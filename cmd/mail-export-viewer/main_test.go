@@ -121,12 +121,12 @@ func TestRunExitCodes(t *testing.T) {
 
 func TestAcquireCacheLock(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "x.db")
-	l1, err := acquireCacheLock(db)
+	l1, err := lockInstance(db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	l1.record("pid 7, http://127.0.0.1:1/")
-	_, err = acquireCacheLock(db)
+	l1.Record("pid 7, http://127.0.0.1:1/")
+	_, err = lockInstance(db)
 	if err == nil || !strings.Contains(err.Error(), "already running") || !strings.Contains(err.Error(), "http://127.0.0.1:1/") {
 		t.Fatalf("second lock: %v", err)
 	}
@@ -134,12 +134,12 @@ func TestAcquireCacheLock(t *testing.T) {
 	if fi.Mode().Perm() != 0o600 {
 		t.Fatalf("lock mode %v", fi.Mode())
 	}
-	l1.release()
-	l2, err := acquireCacheLock(db)
+	l1.Release()
+	l2, err := lockInstance(db)
 	if err != nil {
 		t.Fatalf("after release: %v", err)
 	}
-	l2.release()
+	l2.Release()
 }
 
 func TestLockRefusesSymlink(t *testing.T) {
@@ -150,7 +150,7 @@ func TestLockRefusesSymlink(t *testing.T) {
 	if err := os.Symlink(target, db+".run"); err != nil {
 		t.Skip(err)
 	}
-	if _, err := acquireCacheLock(db); err == nil {
+	if _, err := lockInstance(db); err == nil {
 		t.Fatal("symlink lock accepted")
 	}
 	if b, _ := os.ReadFile(target); string(b) != "keep" {

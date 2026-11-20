@@ -6,35 +6,56 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"syscall"
 )
 
-// fileLock is an exclusive advisory lock (flock) on "<db>.lock". The kernel
+// FileLock is an exclusive advisory lock (flock) on a file: the index's
+// "<db>.lock" (taken by Open) and the command's instance lock. The kernel
 // releases it when the process dies, so a stale lock file never blocks a
-// restart. The file records the owner's pid for the error message.
-type fileLock struct{ f *os.File }
+// restart. The file holds an owner note (Record), quoted to a refused
+// second owner.
+type FileLock struct{ f *os.File }
 
-func acquireLock(path string) (*fileLock, error) {
+// AcquireLock takes the lock at path without waiting, creating the file
+// with mode 0600 (never through a symlink: ErrNotRegular). If another
+// process holds it, the error wraps ErrLocked and quotes the owner note.
+func AcquireLock(path string) (*FileLock, error) {
 	f, err := openPrivateFile(path, true)
 	if err != nil {
 		return nil, err
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		f.Close()
+		defer f.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) {
-			return nil, fmt.Errorf("%w (lock %s)", ErrLocked, path)
+			owner := ""
+			if b, rerr := os.ReadFile(path); rerr == nil {
+				if s := strings.TrimSpace(string(b)); s != "" && len(s) < 512 {
+					owner = " (" + s + ")"
+				}
+			}
+			return nil, fmt.Errorf("%w%s", ErrLocked, owner)
 		}
 		return nil, fmt.Errorf("index: lock %s: %w", path, err)
 	}
-	if err := f.Truncate(0); err == nil {
-		f.WriteAt([]byte(fmt.Sprintf("pid %d\n", os.Getpid())), 0)
-	}
-	return &fileLock{f: f}, nil
+	l := &FileLock{f: f}
+	l.Record(fmt.Sprintf("pid %d", os.Getpid()))
+	return l, nil
 }
 
-// release drops the lock. The file stays: removing it would race with
-// another instance that has just opened it.
-func (l *fileLock) release() {
+// Record replaces the owner note.
+func (l *FileLock) Record(note string) {
+	if l == nil || l.f == nil {
+		return
+	}
+	if err := l.f.Truncate(0); err == nil {
+		l.f.WriteAt([]byte(note+"\n"), 0)
+	}
+}
+
+// Release drops the lock; later calls do nothing. The file stays:
+// removing it would race with another process that has just opened it.
+func (l *FileLock) Release() {
 	if l == nil || l.f == nil {
 		return
 	}

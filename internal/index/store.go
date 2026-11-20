@@ -170,7 +170,7 @@ type Options struct {
 // Stores off the same database until Close.
 type Store struct {
 	wdb, rdb *sql.DB
-	lock     *fileLock
+	lock     *FileLock
 	opts     Options
 
 	mu     sync.Mutex // guards status
@@ -216,7 +216,7 @@ func Open(dbPath string, opts Options) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
 		return nil, fmt.Errorf("index: create cache directory: %w", err)
 	}
-	lock, err := acquireLock(dbPath + ".lock")
+	lock, err := AcquireLock(dbPath + ".lock")
 	if err != nil {
 		return nil, err
 	}
@@ -227,7 +227,7 @@ func Open(dbPath string, opts Options) (*Store, error) {
 		}
 	}
 	if err != nil {
-		lock.release()
+		lock.Release()
 		return nil, err
 	}
 	s.lock, s.opts = lock, opts
@@ -365,7 +365,7 @@ func (s *Store) Close() error {
 	}
 	// runMu stays locked: the store is closed for good.
 	err := errors.Join(s.rdb.Close(), s.wdb.Close())
-	s.lock.release()
+	s.lock.Release()
 	return err
 }
 
