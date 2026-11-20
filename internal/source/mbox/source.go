@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -55,6 +56,36 @@ func open(c source.Candidate) (source.Source, error) {
 func (s *mboxSource) Kind() string { return source.Mbox }
 func (s *mboxSource) Path() string { return s.path }
 func (s *mboxSource) Close() error { return nil }
+
+// TagStyles returns the sidecar's tag styles, one per display name (a
+// coloured one wins, else the first key in sorted order), sorted by name;
+// nil without a sidecar.
+func (s *mboxSource) TagStyles() []source.TagStyle {
+	keys := make([]string, 0, len(s.tagInfo))
+	for k := range s.tagInfo {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys) // deterministic when two keys share a name
+	byName := map[string]source.TagStyle{}
+	for _, k := range keys {
+		ts := s.tagInfo[k]
+		if ts.Name == "" {
+			continue
+		}
+		if old, ok := byName[ts.Name]; !ok || old.Color == "" {
+			byName[ts.Name] = ts
+		}
+	}
+	if len(byName) == 0 {
+		return nil
+	}
+	out := make([]source.TagStyle, 0, len(byName))
+	for _, ts := range byName {
+		out = append(out, ts)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
 
 func (s *mboxSource) Inputs() []string {
 	in := []string{s.path}

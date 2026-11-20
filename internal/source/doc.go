@@ -136,6 +136,12 @@
 // folder, including empty ones, so they appear in the UI. The index calls
 // it after Scan and adds the folders to those seen in Entries.
 //
+// TagStyler: sources that know tag colours (mbox with a Thunderbird
+// sidecar: the sidecar's TagInfo values, one per display name, coloured
+// ones preferred) return them; the index calls it after Scan and keeps the
+// colours with that source, so they go away when the source changes or
+// disappears.
+//
 // # Sidecars (Thunderbird .msf)
 //
 // The mbox and msf packages never import each other. The msf package calls
@@ -153,6 +159,6 @@
 // SidecarMeta.Tags are display names already. TagInfo maps tag keys (as
 // written in X-Mozilla-Keys and the .msf "keywords" cell) to display name
 // and colour, so the mbox source also names keywords found in headers of
-// messages without a sidecar row. Exposing colours to the index will be an
-// optional Source interface added when the index needs it.
+// messages without a sidecar row. Colours reach the index through
+// TagStyler.
 package source

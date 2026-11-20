@@ -64,6 +64,14 @@ type FolderLister interface {
 	Folders() []string
 }
 
+// TagStyler is optionally implemented by sources that know how their tags
+// are shown (Thunderbird: prefs.js names and colours, via the sidecar).
+// TagStyles returns one style per tag display name (as in Entry.Tags),
+// sorted by name; the index calls it after Scan and shows the colours.
+type TagStyler interface {
+	TagStyles() []TagStyle
+}
+
 // Entry is what Scan yields per message.
 type Entry struct {
 	// Folder is the folder path, '/'-separated, valid UTF-8, never empty
