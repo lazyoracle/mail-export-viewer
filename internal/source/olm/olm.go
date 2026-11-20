@@ -23,17 +23,37 @@ func init() {
 
 // Limits against hostile archives. Variables so that tests can lower them.
 var (
-	// maxEntries is the most zip entries an archive may hold.
-	maxEntries = 5_000_000
+	// maxEntries is the most zip entries an archive may hold. Real
+	// mailboxes have one entry per message and attachment, so 1M covers
+	// very large exports while bounding the central directory in memory.
+	maxEntries = 1_000_000
 	// maxXMLBytes is the most uncompressed bytes of one message document
 	// (and of one attachment) that is read.
 	maxXMLBytes int64 = source.MaxMessageBytes
-	// maxScanBytes is the total uncompressed XML Scan reads before it
-	// stops with a warning.
-	maxScanBytes int64 = 64 << 30
+	// maxScanBytes caps the total uncompressed message XML one Scan reads.
+	maxScanBytes int64 = 2 << 30
+	// The Scan budget is budgetFactor times the archive size, at least
+	// budgetFloor and at most maxScanBytes (see scanBudget).
+	budgetFloor, budgetFactor int64 = 64 << 20, 20
+	// maxMessageBytes is the most Attachment reads, and the most a
+	// synthesised Raw message may be. It equals source.MaxMessageBytes
+	// (a variable only so tests can lower it).
+	maxMessageBytes int64 = source.MaxMessageBytes
 )
 
+// scanBudget is the decompression budget of Scan for an archive of size
+// bytes: proportional to the archive (real exports of text compress by
+// roughly 5-10x), never below budgetFloor, never above maxScanBytes.
+func scanBudget(size int64) int64 {
+	b := max(budgetFloor, size*budgetFactor)
+	if size > maxScanBytes/max(budgetFactor, 1) {
+		b = maxScanBytes
+	}
+	return min(b, maxScanBytes)
+}
+
 type olm struct {
+	size   int64
 	path   string
 	f      *os.File
 	zr     *zip.Reader
@@ -68,7 +88,7 @@ func open(c source.Candidate) (source.Source, error) {
 		rel = path.Base(c.Path)
 	}
 	rel = strings.ToValidUTF8(rel, "�")
-	s := &olm{path: c.Path, f: f, zr: zr, byName: map[string]*zip.File{}, byNorm: map[string]*zip.File{}}
+	s := &olm{size: st.Size(), path: c.Path, f: f, zr: zr, byName: map[string]*zip.File{}, byNorm: map[string]*zip.File{}}
 	s.stem = strings.TrimSuffix(rel, path.Ext(rel))
 	if s.stem == "" || strings.HasSuffix(s.stem, "/") {
 		s.stem += "olm"
@@ -268,19 +288,20 @@ func (s *olm) readXML(e *zip.File) (p *parsed, ok bool, n int64, err error) {
 		}
 	}()
 	if int64(e.UncompressedSize64) > maxXMLBytes {
-		return nil, false, 0, fmt.Errorf("olm: %s: %w", e.Name, source.ErrTooLarge)
+		return nil, false, maxXMLBytes, fmt.Errorf("olm: %s: %w", e.Name, source.ErrTooLarge)
 	}
 	rc, err := e.Open()
 	if err != nil {
 		return nil, false, 0, fmt.Errorf("olm: %s: %w", e.Name, err)
 	}
 	defer rc.Close()
+	// The declared size is not trusted: only actual bytes count.
 	data, err := io.ReadAll(io.LimitReader(rc, maxXMLBytes+1))
 	if err != nil {
-		return nil, false, 0, fmt.Errorf("olm: %s: %w", e.Name, err)
+		return nil, false, int64(len(data)), fmt.Errorf("olm: %s: %w", e.Name, err)
 	}
 	if int64(len(data)) > maxXMLBytes {
-		return nil, false, 0, fmt.Errorf("olm: %s: %w", e.Name, source.ErrTooLarge)
+		return nil, false, maxXMLBytes, fmt.Errorf("olm: %s: %w", e.Name, source.ErrTooLarge)
 	}
 	root, err := parseXML(bytes.NewReader(data))
 	if err != nil {
@@ -363,22 +384,49 @@ func (s *olm) Raw(loc source.Locator) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	size := int64(len(p.msg.Text) + len(p.msg.HTML))
+	tooLarge := fmt.Errorf("olm: %q: %w", loc.Name, source.ErrTooLarge)
+	// The message is written with base64 attachments (4/3 expansion): the
+	// limit applies to that output. Declared sizes only give a cheap early
+	// refusal; running totals of the bytes actually read enforce it.
+	used := int64(len(p.msg.Text)+len(p.msg.HTML)) + 1024
 	for _, a := range p.msg.Attachments {
-		size += a.Size
+		used += a.Size / 3 * 4
 	}
-	if size > source.MaxMessageBytes {
-		return nil, fmt.Errorf("olm: %q: %w", loc.Name, source.ErrTooLarge)
+	if used > maxMessageBytes {
+		return nil, tooLarge
 	}
-	var b bytes.Buffer
-	err = mail.WriteEML(&b, &p.msg, func(i int) ([]byte, error) {
-		_, d, err := s.attData(loc.Name, p, i)
+	used = int64(len(p.msg.Text)+len(p.msg.HTML)) + 1024
+	w := &limitWriter{max: maxMessageBytes, err: tooLarge}
+	err = mail.WriteEML(w, &p.msg, func(i int) ([]byte, error) {
+		remaining := (maxMessageBytes - used) / 4 * 3
+		if remaining < 0 {
+			return nil, tooLarge
+		}
+		_, d, err := s.attData(loc.Name, p, i, remaining)
+		used += int64(len(d))/3*4 + 4
 		return d, err
 	})
 	if err != nil {
+		if errors.Is(err, source.ErrTooLarge) {
+			return nil, tooLarge
+		}
 		return nil, err
 	}
-	return b.Bytes(), nil
+	return w.b.Bytes(), nil
+}
+
+// limitWriter buffers up to max bytes, then fails with err.
+type limitWriter struct {
+	b   bytes.Buffer
+	max int64
+	err error
+}
+
+func (w *limitWriter) Write(p []byte) (int, error) {
+	if int64(w.b.Len())+int64(len(p)) > w.max {
+		return 0, w.err
+	}
+	return w.b.Write(p)
 }
 
 func (s *olm) Attachment(loc source.Locator, index int) (mail.Attachment, []byte, error) {
@@ -386,10 +434,12 @@ func (s *olm) Attachment(loc source.Locator, index int) (mail.Attachment, []byte
 	if err != nil {
 		return mail.Attachment{}, nil, err
 	}
-	return s.attData(loc.Name, p, index)
+	return s.attData(loc.Name, p, index, maxMessageBytes)
 }
 
-func (s *olm) attData(msgName string, p *parsed, i int) (mail.Attachment, []byte, error) {
+// attData reads attachment i, refusing (ErrTooLarge) more than limit
+// actual bytes whatever the zip header declares.
+func (s *olm) attData(msgName string, p *parsed, i int, limit int64) (mail.Attachment, []byte, error) {
 	if i < 0 || i >= len(p.msg.Attachments) {
 		return mail.Attachment{}, nil, fmt.Errorf("olm: attachment %d: %w", i, mail.ErrNotFound)
 	}
@@ -398,7 +448,7 @@ func (s *olm) attData(msgName string, p *parsed, i int) (mail.Attachment, []byte
 	if e == nil {
 		return a, nil, nil // dangling reference (listed with Size 0): an empty attachment
 	}
-	if int64(e.UncompressedSize64) > source.MaxMessageBytes {
+	if int64(e.UncompressedSize64) > limit {
 		return a, nil, fmt.Errorf("olm: attachment %q: %w", a.Filename, source.ErrTooLarge)
 	}
 	rc, err := e.Open()
@@ -406,15 +456,23 @@ func (s *olm) attData(msgName string, p *parsed, i int) (mail.Attachment, []byte
 		return a, nil, err
 	}
 	defer rc.Close()
-	d, err := io.ReadAll(io.LimitReader(rc, source.MaxMessageBytes+1))
+	d, err := io.ReadAll(io.LimitReader(rc, limit+1))
 	if err != nil {
 		return a, nil, err
 	}
-	if int64(len(d)) > source.MaxMessageBytes {
+	if int64(len(d)) > limit {
 		return a, nil, fmt.Errorf("olm: attachment %q: %w", a.Filename, source.ErrTooLarge)
 	}
 	return a, d, nil
 }
+
+type scanResult int
+
+const (
+	resEmit    scanResult = iota // an entry was built
+	resNotMail                   // the document holds no message
+	resBroken                    // unreadable or malformed (already warned)
+)
 
 func (s *olm) Scan(ctx context.Context, emit func(source.Entry) error, warn func(error)) error {
 	if err := ctx.Err(); err != nil {
@@ -422,8 +480,11 @@ func (s *olm) Scan(ctx context.Context, emit func(source.Entry) error, warn func
 	}
 	var (
 		read    int64
+		budget  = scanBudget(s.size)
 		skipped = map[string]int{}
 		total   int
+		dups    int
+		seen    = map[string]bool{}
 	)
 	for _, e := range s.zr.File {
 		if err := ctx.Err(); err != nil {
@@ -440,22 +501,31 @@ func (s *olm) Scan(ctx context.Context, emit func(source.Entry) error, warn func
 			}
 			continue
 		}
-		if read >= maxScanBytes {
-			warn(fmt.Errorf("olm: %s: stopped reading messages after %d bytes of XML", s.path, read))
-			break
-		}
-		ent, ok, n := s.scanOne(e, folder, warn)
-		read += n
-		if !ok {
-			if ent.Msg == nil { // not a message
-				skipped["other"]++
-				total++
-			}
+		if seen[e.Name] {
+			// Locators address the first entry of a name: a later one
+			// would be served as the wrong message.
+			dups++
 			continue
 		}
-		if err := emit(ent); err != nil {
-			return err
+		seen[e.Name] = true
+		if read >= budget {
+			warn(fmt.Errorf("olm: %s: stopped reading messages: decompression budget of %d bytes used up", s.path, budget))
+			break
 		}
+		ent, res, n := s.scanOne(e, folder, warn)
+		read += n
+		switch res {
+		case resNotMail:
+			skipped["other"]++
+			total++
+		case resEmit:
+			if err := emit(ent); err != nil {
+				return err
+			}
+		}
+	}
+	if dups > 0 {
+		warn(fmt.Errorf("olm: %s: skipped %d duplicate entries (same name as an earlier one)", s.path, dups))
 	}
 	if total > 0 {
 		var parts []string
@@ -469,24 +539,23 @@ func (s *olm) Scan(ctx context.Context, emit func(source.Entry) error, warn func
 	return nil
 }
 
-// scanOne builds the entry of message document e. ok is false when nothing
-// is to be emitted; the entry's Msg is then nil iff the document was not a
-// message (as opposed to broken, which was warned about).
-func (s *olm) scanOne(e *zip.File, folder string, warn func(error)) (ent source.Entry, ok bool, n int64) {
+// scanOne builds the entry of message document e and reports how many
+// actual bytes it read.
+func (s *olm) scanOne(e *zip.File, folder string, warn func(error)) (source.Entry, scanResult, int64) {
 	p, isMsg, n, err := s.readXML(e)
 	switch {
 	case errors.Is(err, source.ErrTooLarge):
 		// Listed, from what we know, so that it shows up; Load refuses it.
 		sum := &mail.Summary{Envelope: mail.Envelope{Subject: "(message too large to read)", Date: e.Modified.UTC()}}
-		return source.Entry{Folder: folder, Loc: source.Locator{Name: e.Name}, Msg: sum}, true, n
+		return source.Entry{Folder: folder, Loc: source.Locator{Name: e.Name}, Msg: sum}, resEmit, n
 	case err != nil:
 		warn(err)
-		return source.Entry{Msg: &mail.Summary{}}, false, n
+		return source.Entry{}, resBroken, n
 	case !isMsg:
-		return source.Entry{}, false, n
+		return source.Entry{}, resNotMail, n
 	}
 	return source.Entry{
 		Folder: folder, Labels: p.labels, Flags: p.flags, Props: p.props,
 		Loc: source.Locator{Name: e.Name}, Msg: p.msg.Summary(),
-	}, true, n
+	}, resEmit, n
 }

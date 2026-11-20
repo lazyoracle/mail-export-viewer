@@ -1,18 +1,25 @@
 package olm
 
 import (
+	"bufio"
 	"encoding/xml"
 	"errors"
 	"io"
 	"strings"
 
 	"golang.org/x/text/encoding/htmlindex"
+	"golang.org/x/text/encoding/unicode"
 )
 
 // Limits on one XML document (hostile input).
 const (
 	maxNodes = 200000
 	maxDepth = 64
+	// maxTokens bounds every XML token (elements, text chunks, comments,
+	// processing instructions), so floods of tiny tokens cannot burn CPU.
+	maxTokens = 1_000_000
+	// maxTextBytes caps the text kept per element; the rest is dropped.
+	maxTextBytes = 64 << 20
 )
 
 type attr struct{ name, orig, val string }
@@ -23,6 +30,7 @@ type node struct {
 	name, orig string
 	attrs      []attr
 	text       string
+	tb         strings.Builder // accumulates text until the element ends
 	kids       []*node
 }
 
@@ -59,9 +67,22 @@ var errTooComplex = errors.New("olm: XML too complex")
 // replaced by spaces and unknown encodings are converted, so that sloppy
 // exports still parse. It fails on malformed or over-limit documents.
 func parseXML(r io.Reader) (*node, error) {
+	br := bufio.NewReader(r)
+	transcoded := false
+	if b, _ := br.Peek(2); len(b) == 2 && (b[0] == 0xFF && b[1] == 0xFE || b[0] == 0xFE && b[1] == 0xFF) {
+		// UTF-16 with a BOM is converted up front (blanking its NUL bytes
+		// would destroy it). UTF-16 without a BOM is not supported.
+		r = unicode.UTF16(unicode.LittleEndian, unicode.UseBOM).NewDecoder().Reader(br)
+		transcoded = true
+	} else {
+		r = br
+	}
 	d := xml.NewDecoder(&cleanReader{r: r})
 	d.Strict = false
 	d.CharsetReader = func(label string, in io.Reader) (io.Reader, error) {
+		if transcoded && strings.HasPrefix(strings.ToLower(label), "utf-16") {
+			return in, nil
+		}
 		enc, err := htmlindex.Get(label)
 		if err != nil {
 			return in, nil
@@ -70,7 +91,7 @@ func parseXML(r io.Reader) (*node, error) {
 	}
 	root := &node{}
 	stack := []*node{root}
-	count := 0
+	count, tokens := 0, 0
 	for {
 		tok, err := d.Token()
 		if err == io.EOF {
@@ -78,6 +99,9 @@ func parseXML(r io.Reader) (*node, error) {
 		}
 		if err != nil {
 			return nil, err
+		}
+		if tokens++; tokens > maxTokens {
+			return nil, errTooComplex
 		}
 		top := stack[len(stack)-1]
 		switch t := tok.(type) {
@@ -94,11 +118,13 @@ func parseXML(r io.Reader) (*node, error) {
 			stack = append(stack, n)
 		case xml.EndElement:
 			if len(stack) > 1 {
+				top.text = top.tb.String()
+				top.tb = strings.Builder{}
 				stack = stack[:len(stack)-1]
 			}
 		case xml.CharData:
-			if len(stack) > 1 {
-				top.text += string(t)
+			if len(stack) > 1 && top.tb.Len() < maxTextBytes {
+				top.tb.Write(t)
 			}
 		}
 	}

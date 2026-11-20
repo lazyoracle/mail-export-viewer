@@ -172,7 +172,7 @@ func TestLoadAndAttachments(t *testing.T) {
 		t.Fatal(err)
 	}
 	back := mail.Parse(raw, time.Time{})
-	if back.Subject != "Quarterly report" || len(back.Attachments) != 3 && len(back.Attachments) != 2 {
+	if back.Subject != "Quarterly report" || len(back.Attachments) != 3 {
 		t.Errorf("round trip %+v", back.Envelope)
 	}
 }

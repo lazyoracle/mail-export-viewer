@@ -79,15 +79,27 @@
 //
 // # Limits (hostile archives)
 //
-// More than 5,000,000 zip entries: Open fails. A message document over
-// MaxMessageBytes (also counted while decompressing, not just by the
-// declared size) is listed by Scan as "(message too large to read)" and
-// Load, Raw and Attachment return ErrTooLarge; attachments over
-// MaxMessageBytes likewise. Scan stops with a warning after 64 GiB of
-// message XML. XML documents are limited to 200,000 elements and depth 64;
-// invalid control characters are blanked, non-UTF-8 encodings converted.
-// A broken document is a warning, the scan goes on; panics are recovered
-// per item.
+// More than 1,000,000 zip entries: Open fails. Declared zip sizes are
+// never trusted: every read is bounded by what is actually inflated (and
+// archive/zip itself refuses to inflate past a declared size). A message
+// document over maxXMLBytes (= MaxMessageBytes) is listed by Scan as
+// "(message too large to read)" and Load, Raw and Attachment return
+// ErrTooLarge; an attachment over MaxMessageBytes likewise. Raw bounds the
+// whole synthesised message (text, HTML and all attachments after base64
+// expansion) by MaxMessageBytes using running totals of bytes read. Scan
+// has a decompression budget over all message XML it reads, charging
+// actual bytes on every path (too large, read errors): 20 times the
+// archive size, at least 64 MiB, at most 2 GiB; when used up Scan warns and
+// stops. Zip entries repeating an earlier name are skipped with one
+// warning (a Locator addresses the first entry of its name). XML documents
+// are limited to 200,000 elements, 1,000,000 tokens (comments and
+// processing instructions count), depth 64 and 64 MiB of text per element;
+// invalid control characters are blanked, non-UTF-8 encodings converted;
+// UTF-16 is supported only with a BOM. A broken document is a warning, the
+// scan goes on; panics are recovered per item.
+//
+// A plain body element is taken as HTML only when it starts with <html or
+// <!doctype html, or when hashtml is true and it starts with a tag.
 //
 // Non-mail documents (contacts, calendar, tasks, notes, recognised by
 // .olk15Contact/Event/Task/Note extension, by a directory name containing

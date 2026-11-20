@@ -34,10 +34,12 @@ type resolver func(msgName, url string) (size int64, ok bool)
 // key strips the OPFMessage/Copy/Get decoration from an element name
 // (already lower-case): "opfmessagecopysubject" -> "subject".
 func key(name string) string {
-	name = strings.TrimPrefix(name, "opfmessage")
-	name = strings.TrimPrefix(name, "copy")
-	name = strings.TrimPrefix(name, "get")
-	return name
+	rest, ok := strings.CutPrefix(name, "opfmessage")
+	if !ok {
+		return name
+	}
+	rest = strings.TrimPrefix(rest, "copy")
+	return strings.TrimPrefix(rest, "get")
 }
 
 func truthy(s string) bool {
@@ -122,8 +124,17 @@ func looksHTML(s string) bool {
 	if len(h) > 2048 {
 		h = h[:2048]
 	}
-	return strings.HasPrefix(h, "<html") || strings.HasPrefix(h, "<!doctype html") ||
-		strings.HasPrefix(h, "<body") || strings.Contains(h, "<body")
+	return strings.HasPrefix(h, "<html") || strings.HasPrefix(h, "<!doctype html")
+}
+
+// bodyIsHTML decides whether a plain body element actually holds HTML when
+// there is no HTML element: a document start (<html, <!doctype html), or,
+// when the message says it has HTML (hashtml), any body starting with a tag.
+func bodyIsHTML(body string, hasHTML bool) bool {
+	if looksHTML(body) {
+		return true
+	}
+	return hasHTML && strings.HasPrefix(strings.TrimSpace(body), "<")
 }
 
 var (
@@ -251,7 +262,7 @@ func interpret(root *node, msgName string, resolve resolver) (p *parsed, ok bool
 	case !received.IsZero():
 		p.msg.Date = received
 	}
-	if html == "" && (hasHTML || looksHTML(body)) && looksHTML(body) {
+	if html == "" && bodyIsHTML(body, hasHTML) {
 		html, body = body, ""
 	}
 	p.msg.Text, p.msg.HTML = body, html

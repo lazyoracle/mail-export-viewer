@@ -3,6 +3,8 @@ package testutil
 import (
 	"archive/zip"
 	"bytes"
+	"compress/flate"
+	"hash/crc32"
 	"encoding/xml"
 	"os"
 	"path/filepath"
@@ -20,6 +22,9 @@ import (
 type OLMEntry struct {
 	Name string
 	Data []byte
+	// DeclaredSize, when non-zero, is written as the entry's uncompressed
+	// size in the zip headers instead of len(Data) (a lying archive).
+	DeclaredSize uint64
 }
 
 // OLMAddr is a recipient or sender.
@@ -161,6 +166,19 @@ func WriteOLM(t testing.TB, path string, entries ...OLMEntry) string {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	for _, e := range entries {
+		if e.DeclaredSize != 0 {
+			var comp bytes.Buffer
+			fw, _ := flate.NewWriter(&comp, flate.BestCompression)
+			fw.Write(e.Data)
+			fw.Close()
+			w, err := zw.CreateRaw(&zip.FileHeader{Name: e.Name, Method: zip.Deflate, CRC32: crc32.ChecksumIEEE(e.Data),
+				CompressedSize64: uint64(comp.Len()), UncompressedSize64: e.DeclaredSize})
+			if err != nil {
+				t.Fatal(err)
+			}
+			w.Write(comp.Bytes())
+			continue
+		}
 		w, err := zw.Create(e.Name)
 		if err != nil {
 			t.Fatal(err)
