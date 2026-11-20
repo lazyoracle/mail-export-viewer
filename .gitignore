@@ -1,0 +1,25 @@
+
+# Build output
+/mail-export-viewer
+/dist/
+*.exe
+*.test
+*.out
+coverage.*
+
+# Databases and caches
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite*
+
+# Test scratch (real mail must never be committed)
+/tmp/
+/scratch/
+*.mbox
+*.pst
+*.olm
+!internal/**/testdata/*.mbox
+!internal/**/testdata/*.pst
+!internal/**/testdata/*.olm
