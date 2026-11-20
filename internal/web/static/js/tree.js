@@ -34,17 +34,24 @@ function prune(nodes, sourceId) {
 const baseName = (s) => String(s || '').split('/').pop().replace(/\.[^.]*$/, '').toLowerCase();
 
 /**
- * [{source, nodes}] in facets.sources order. A PST/OLM file's folders sit
- * under a node named after the file; that wrapper is dropped when it holds
- * no mail of its own, since the source heading already names the file.
+ * [{source, nodes}] in facets.sources order. The source heading already
+ * names the file, so wrappers that repeat it are dropped: directory nodes
+ * this source has no folder for, a PST/OLM file's root node named after
+ * the file when it holds no mail, and a lone leaf folder named like the
+ * file (an mbox file is usually exactly one folder; the source row opens it).
  */
 export function sourceTrees(facets) {
   return ((facets && facets.sources) || []).map((source) => {
     let nodes = prune(facets.folders, source.id);
-    if (nodes.length === 1 && !nodes[0].count && nodes[0].children.length &&
-        nodes[0].name.toLowerCase() === baseName(source.name)) {
-      nodes = nodes[0].children;
+    for (;;) {
+      const only = nodes.length === 1 ? nodes[0] : null;
+      if (!only || !only.children.length) break;
+      const wrapper = only.folderId === null ||
+        (!only.count && only.name.toLowerCase() === baseName(source.name));
+      if (!wrapper) break;
+      nodes = only.children;
     }
+    if (nodes.length === 1 && !nodes[0].children.length && nodes[0].name.toLowerCase() === baseName(source.name)) nodes = [];
     return { source, nodes };
   });
 }

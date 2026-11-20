@@ -120,7 +120,11 @@ test('header block: subject, sender, recipients, flags, folder and terms', () =>
   assert.equal(article.querySelector('.from-email').textContent, 'ada@example.com');
   const rows = article.querySelectorAll('.meta-row').map((r) => r.textContent);
   assert.deepEqual(rows, ['Toc@example.com', 'CcMary <m@example.com>']);
-  assert.equal(article.querySelector('.msg-where').textContent, 'mboxTakeout.mbox/Inbox');
+  assert.equal(article.querySelector('.msg-where').textContent, 'mboxTakeout.mbox › Inbox');
+  const where = (src, folder) => render(message({ source: { id: 1, name: src, kind: 'olm' }, folder })).article.querySelector('.where-text').textContent;
+  assert.equal(where('backup.olm', 'backup/Inbox'), 'backup.olm › Inbox', 'the file name is not repeated');
+  assert.equal(where('Takeout/All mail.mbox', 'Takeout/All mail'), 'Takeout/All mail.mbox', 'an mbox file is its folder');
+  assert.equal(where('Mail', 'Archive/2019'), 'Mail › Archive/2019');
   assert.deepEqual(article.querySelector('.msg-flags').querySelectorAll('.flag').map((f) => f.dataset.flag), ['starred']);
   assert.deepEqual(article.querySelectorAll('.pill').map((l) => l.textContent), ['Work', 'Finance', 'To do', 'Inbox']);
   const raw = article.querySelector('a.tool-link');
@@ -292,4 +296,15 @@ test('renderConversation: expanded state and loaded bodies survive a redraw', as
   await tick(5);
   assert.equal(fetches, 2);
   assert.equal(a.querySelectorAll('.convo-item')[2].querySelector('pre').textContent, 'Body 7');
+});
+
+test('renderConversation: a capped thread says so', () => {
+  const a = document.createElement('article');
+  const thread = [item({ id: 1, threadCount: 6000 }), item({ id: 42, threadCount: 6000 })];
+  renderConversation(a, message(), thread, { view: 'text', onView() {}, onBack() {}, now, truncated: true, loadMessage: async () => message() });
+  assert.match(a.querySelector('.notice-truncated').textContent, /6,000 messages/);
+  assert.equal(a.querySelector('.convo-count').textContent, 'Showing 2 of 6,000 messages in this conversation');
+  const b = document.createElement('article');
+  renderConversation(b, message(), thread.slice(0, 2), { view: 'text', onView() {}, onBack() {}, now, loadMessage: async () => message() });
+  assert.equal(b.querySelector('.notice-truncated'), null);
 });

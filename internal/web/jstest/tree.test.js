@@ -46,6 +46,27 @@ test('sourceTrees hoists the empty root named after a PST/OLM file', () => {
   assert.deepEqual(sourceTrees({}), []);
 });
 
+test('sourceTrees drops folder-less wrappers and a lone folder that is the source itself', () => {
+  const t = sourceTrees({
+    sources: [{ id: 5, name: 'Takeout/All mail.mbox', kind: 'mbox', count: 3, unread: 0 },
+      { id: 6, name: 'Local/Archives.sbd/2021', kind: 'mbox', count: 2, unread: 0 }],
+    folders: [
+      { name: 'Takeout', path: 'Takeout', count: 0, unread: 0, sources: [], children: [
+        { name: 'All mail', path: 'Takeout/All mail', count: 3, unread: 0, sources: [ref(50, 5, 3)], children: [] },
+      ] },
+      { name: 'Local', path: 'Local', count: 0, unread: 0, sources: [], children: [
+        { name: 'Archives', path: 'Local/Archives', count: 0, unread: 0, sources: [], children: [
+          { name: '2021', path: 'Local/Archives/2021', count: 2, unread: 0, sources: [ref(60, 6, 2)], children: [
+            { name: 'Q1', path: 'Local/Archives/2021/Q1', count: 1, unread: 0, sources: [ref(61, 6, 1)], children: [] },
+          ] },
+        ] },
+      ] },
+    ],
+  });
+  assert.deepEqual(t[0].nodes, [], 'the source row stands for its only folder');
+  assert.deepEqual(t[1].nodes.map((n) => [n.path, n.folderId, n.children.length]), [['Local/Archives/2021', 60, 1]]);
+});
+
 test('scopeOrder lists the sources and visible folders in sidebar order', () => {
   const t = sourceTrees(facets);
   assert.deepEqual(scopeOrder(t, new Set()).map((s) => `${s.kind}:${s.id}`),

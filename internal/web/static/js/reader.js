@@ -154,6 +154,22 @@ function metaBlock(msg, now) {
     dateBlock(msg.date, now));
 }
 
+const stripExt = (s) => String(s || '').replace(/\.[^./]*$/, '');
+
+/**
+ * "source › folder", without repeating the file: a PST/OLM folder path
+ * starts with the file's base name, and an mbox file is usually its folder.
+ */
+export function whereText(src, folder) {
+  const name = (src && src.name) || '';
+  let f = folder || '';
+  const stem = stripExt(name);
+  if (f === stem) f = '';
+  const base = stem.split('/').pop();
+  if (base && f.startsWith(`${base}/`)) f = f.slice(base.length + 1);
+  return [name, f].filter(Boolean).join(' › ');
+}
+
 /** Where the message lives (source and folder), its flags and its terms. */
 function tagsBlock(msg, onTerm) {
   const src = msg.source || {};
@@ -161,7 +177,7 @@ function tagsBlock(msg, onTerm) {
   return h('div', { class: 'msg-tags' },
     h('span', { class: 'msg-where', title: 'Source file and folder' },
       src.kind ? h('span', { class: `kind-badge kind-${src.kind}`, text: kindLabel(src.kind) }) : null,
-      h('span', { class: 'where-text', text: [src.name, msg.folder].filter(Boolean).join('/') })),
+      h('span', { class: 'where-text', text: whereText(src, msg.folder) })),
     flagMarks(msg.flags, 'msg-flags'),
     terms.length ? h('ul', { class: 'labels', attrs: { 'aria-label': 'Labels, categories and tags' } },
       terms.map((t) => h('li', {}, pill(t, { onClick: onTerm })))) : null);
@@ -273,6 +289,7 @@ export function renderMessage(article, msg, opts) {
  * view, the others load their bodies on first expand via
  * opts.loadMessage(id) -> Promise<message>.
  *
+ * opts.truncated: the server capped the thread (threadCount is its size).
  * opts.expanded (Map id -> bool) and opts.loaded (Map id -> message), when
  * given, carry the user's expand/collapse choices and the bodies already
  * fetched across redraws (a view-tab switch redraws the whole article).
@@ -282,6 +299,7 @@ export function renderConversation(article, msg, thread, opts) {
   const expanded = opts.expanded || new Map();
   const loadedMsgs = opts.loaded || new Map();
   const current = effectiveView(msg, view);
+  const full = Math.max(thread.length, ...thread.map((it) => it.threadCount || 0));
   const items = thread.map((it) => {
     const isCurrent = it.id === msg.id;
     const startOpen = expanded.has(it.id) ? expanded.get(it.id) : isCurrent;
@@ -345,7 +363,10 @@ export function renderConversation(article, msg, thread, opts) {
     h('header', { class: 'msg-head convo-head' },
       toolbar(msg, current, { ...opts, threadCount: thread.length, threadView: true }),
       subjectHeading(msg),
-      h('p', { class: 'convo-count', text: `${plural(thread.length, 'message')} in this conversation` })),
+      h('p', { class: 'convo-count', text: opts.truncated
+        ? `Showing ${thread.length.toLocaleString('en-US')} of ${plural(full, 'message')} in this conversation`
+        : `${plural(thread.length, 'message')} in this conversation` })),
+    opts.truncated ? notice('notice-truncated', 'thread', `This conversation has ${plural(full, 'message')}. Only the first ${thread.length.toLocaleString('en-US')} are shown here; search to find the others.`) : null,
     h('ol', { class: 'convo', attrs: { 'aria-label': 'Conversation' } }, items)]);
 }
 
