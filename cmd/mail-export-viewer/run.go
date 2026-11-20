@@ -272,7 +272,13 @@ func openSources(input string, stderr io.Writer) ([]source.Source, error) {
 // background and blocks until ctx is done (nil after a clean shutdown) or
 // the server fails.
 func serve(ctx context.Context, cfg config, stderr io.Writer, h hooks) error {
-	srcs, err := openSources(cfg.input, stderr)
+	// Everything downstream works on the canonical input path: sources
+	// report absolute paths, and they are named relative to this root.
+	root, err := canonicalPath(cfg.input)
+	if err != nil {
+		return usageErrf("cannot resolve %s: %v", cfg.input, err)
+	}
+	srcs, err := openSources(root, stderr)
 	if err != nil {
 		return err
 	}
@@ -289,7 +295,7 @@ func serve(ctx context.Context, cfg config, stderr io.Writer, h hooks) error {
 	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
 		return fmt.Errorf("cannot create cache directory: %w", err)
 	}
-	db, err := cachePathFor(cacheDir, cfg.input)
+	db, err := index.CachePath(cacheDir, root)
 	if err != nil {
 		return err
 	}
@@ -329,7 +335,7 @@ func serve(ctx context.Context, cfg config, stderr io.Writer, h hooks) error {
 			}
 		}
 	}
-	srv, err := server.New(server.Config{Store: st, Sources: srcs, Root: cfg.input, UI: web.FS(),
+	srv, err := server.New(server.Config{Store: st, Sources: srcs, Root: root, UI: web.FS(),
 		AllowedHosts: hosts, Version: version, IncludeDeleted: cfg.includeDeleted})
 	if err != nil {
 		return err
@@ -471,11 +477,12 @@ func clean(s string) string {
 	return b.String()
 }
 
-// cachePathFor names the index for input after its symlink-resolved
-// absolute path, so one input reached through different links shares one
-// cache and one lock; it falls back to the plain absolute path when the
-// path cannot be resolved.
-func cachePathFor(dir, input string) (string, error) {
+// canonicalPath returns the absolute, symlink-resolved form of input (the
+// plain absolute path when it cannot be resolved, e.g. it does not exist).
+// The index cache is named after it, so one input reached through
+// different links or relative paths shares one cache and one lock, and
+// sources are named relative to it.
+func canonicalPath(input string) (string, error) {
 	abs, err := filepath.Abs(input)
 	if err != nil {
 		return "", err
@@ -483,5 +490,5 @@ func cachePathFor(dir, input string) (string, error) {
 	if real, err := filepath.EvalSymlinks(abs); err == nil {
 		abs = real
 	}
-	return index.CachePath(dir, abs)
+	return abs, nil
 }

@@ -28,8 +28,9 @@ type Config struct {
 	// Sources are the opened inputs; messages are re-read from the one
 	// whose Path() equals the indexed source path.
 	Sources []source.Source
-	// Root is the input path given by the user. Sources are shown by their
-	// path relative to it (or their base name), never by full path.
+	// Root is the absolute input path (the CLI passes it symlink-resolved,
+	// as Source.Path values are absolute). Sources are shown by their path
+	// relative to it (or their base name), never by full path.
 	Root string
 	// UI is the embedded web UI, served at "/" (index.html) and below.
 	// Nil serves only the API.

@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -450,16 +451,20 @@ func TestCachePathCanonical(t *testing.T) {
 	if err := os.Symlink(dir, link); err != nil {
 		t.Skip(err)
 	}
-	cache := t.TempDir()
-	a, err := cachePathFor(cache, dir)
+	a, err := canonicalPath(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, _ := cachePathFor(cache, link)
+	b, _ := canonicalPath(link)
 	if a != b {
-		t.Fatalf("symlinked input got another cache: %s vs %s", a, b)
+		t.Fatalf("symlinked input got another canonical path: %s vs %s", a, b)
 	}
-	if c, err := cachePathFor(cache, filepath.Join(dir, "missing")); err != nil || c == "" {
+	t.Chdir(dir)
+	if c, _ := canonicalPath("."); c != a {
+		t.Fatalf("relative input: %q, want %q", c, a)
+	}
+	missing := filepath.Join(dir, "missing")
+	if c, err := canonicalPath(missing); err != nil || !filepath.IsAbs(c) || filepath.Base(c) != "missing" {
 		t.Fatalf("fallback: %q %v", c, err)
 	}
 }
@@ -616,4 +621,56 @@ func TestIndexFailureReported(t *testing.T) {
 	if !strings.Contains(errb.String(), "indexing failed: disk on fire") {
 		t.Fatalf("stderr: %s", errb.String())
 	}
+}
+
+// appleMailDir writes an Apple Mail style export under parent/name: every
+// mailbox is a file called "mbox" inside a .mbox directory, so only the
+// path relative to the input tells them apart.
+func appleMailDir(t *testing.T, parent, name string) {
+	t.Helper()
+	msg := func(subj string) string {
+		return "From: Alice <alice@example.com>\nTo: Bob <bob@example.org>\nSubject: " + subj +
+			"\nDate: Mon, 6 Mar 2023 10:00:00 +0000\n\nBody.\n"
+	}
+	for _, p := range []string{"Inbox.mbox/mbox", "Projects.mbox/mbox", "Projects.mbox/Launch.mbox/mbox"} {
+		testutil.WriteMbox(t, filepath.Join(parent, name, "Mailboxes", filepath.FromSlash(p)), msg(p))
+	}
+}
+
+func TestRelativeInputNamesSources(t *testing.T) {
+	parent := t.TempDir()
+	appleMailDir(t, parent, "corp")
+	t.Chdir(parent)
+	for _, input := range []string{"corp", "./corp/", filepath.Join("corp", "Mailboxes", "..")} {
+		t.Run(input, func(t *testing.T) {
+			base, stop, errb := startInProcess(t, hooks{}, "-no-open", "-addr", "127.0.0.1:0", "-cache-dir", t.TempDir(), input)
+			waitFinished(t, base)
+			var st struct{ Sources []struct{ Name string } }
+			getJSON(t, base+"/api/status", &st)
+			var names []string
+			for _, s := range st.Sources {
+				names = append(names, s.Name)
+			}
+			sort.Strings(names)
+			want := []string{"Mailboxes/Inbox.mbox/mbox", "Mailboxes/Projects.mbox/Launch.mbox/mbox", "Mailboxes/Projects.mbox/mbox"}
+			if strings.Join(names, "|") != strings.Join(want, "|") {
+				t.Fatalf("source names %q, want %q", names, want)
+			}
+			if c := stop(); c != 0 {
+				t.Fatalf("exit %d: %s", c, errb.String())
+			}
+		})
+	}
+	// "." (the most common invocation) from inside the export.
+	t.Chdir(filepath.Join(parent, "corp", "Mailboxes"))
+	base, stop, _ := startInProcess(t, hooks{}, "-no-open", "-addr", "127.0.0.1:0", "-cache-dir", t.TempDir(), ".")
+	waitFinished(t, base)
+	var st struct{ Sources []struct{ Name string } }
+	getJSON(t, base+"/api/status", &st)
+	for _, s := range st.Sources {
+		if !strings.HasSuffix(s.Name, ".mbox/mbox") {
+			t.Errorf("source name %q", s.Name)
+		}
+	}
+	stop()
 }
