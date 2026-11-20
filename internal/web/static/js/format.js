@@ -2,6 +2,19 @@
 
 const DAY_MS = 86400000;
 
+// dtf returns a cached Intl.DateTimeFormat: building one is slow, and
+// list rows and conversation entries format thousands of dates.
+const formatters = new Map();
+function dtf(locale, opts) {
+  const key = `${locale}\u0000${JSON.stringify(opts)}`;
+  let f = formatters.get(key);
+  if (!f) {
+    f = new Intl.DateTimeFormat(locale, opts);
+    formatters.set(key, f);
+  }
+  return f;
+}
+
 function parseDate(iso) {
   if (!iso) return null;
   const d = new Date(iso);
@@ -11,7 +24,7 @@ function parseDate(iso) {
 // dayNumber is the calendar day of d in timeZone, as days since the epoch,
 // so "same day" and "days ago" follow the viewer's wall clock.
 function dayNumber(d, timeZone) {
-  const parts = new Intl.DateTimeFormat('en-US', {
+  const parts = dtf('en-US', {
     timeZone, year: 'numeric', month: 'numeric', day: 'numeric',
   }).formatToParts(d);
   const get = (t) => Number(parts.find((p) => p.type === t).value);
@@ -19,7 +32,7 @@ function dayNumber(d, timeZone) {
 }
 
 function yearOf(d, timeZone) {
-  return Number(new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric' }).format(d));
+  return Number(dtf('en-US', { timeZone, year: 'numeric' }).format(d));
 }
 
 /**
@@ -37,14 +50,14 @@ export function formatListDate(iso, now = new Date(), opts = {}) {
   else if (days > 0 && days < 7) f = { weekday: 'short' };
   else if (days > 0 && yearOf(d, timeZone) === yearOf(now, timeZone)) f = { month: 'short', day: 'numeric' };
   else f = { year: '2-digit', month: 'numeric', day: 'numeric' };
-  return new Intl.DateTimeFormat(locale, { ...f, timeZone }).format(d);
+  return dtf(locale, { ...f, timeZone }).format(d);
 }
 
 /** Full date and time for the message header. */
 export function formatFullDate(iso, opts = {}) {
   const d = parseDate(iso);
   if (!d) return 'Unknown date';
-  return new Intl.DateTimeFormat(opts.locale, {
+  return dtf(opts.locale, {
     weekday: 'short', year: 'numeric', month: 'short', day: 'numeric',
     hour: 'numeric', minute: '2-digit', timeZone: opts.timeZone,
   }).format(d);
@@ -142,7 +155,7 @@ export function relativeTime(iso, now = new Date(), locale) {
 export function isoLocal(iso, timeZone) {
   const d = parseDate(iso);
   if (!d) return '';
-  const parts = new Intl.DateTimeFormat('en-US', {
+  const parts = dtf('en-US', {
     timeZone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit',
   }).formatToParts(d);

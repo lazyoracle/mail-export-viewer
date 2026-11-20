@@ -607,10 +607,14 @@ mark { background: var(--mark); color: var(--mark-ink); border-radius: 2px; padd
 .props-none { margin-top: 10px; font-size: 12.5px; }
 .raw-error { color: var(--danger); }
 
-.convo { margin-top: 14px; display: grid; gap: 6px; }
+/* A flex column, not a grid: a 5000-entry conversation is mounted a chunk
+   per frame, and grid layout of the whole list per chunk was quadratic.
+   Off-screen entries skip rendering (content-visibility). */
+.convo { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
 .convo-head .msg-subject { margin-bottom: 4px; }
 .convo-count { color: var(--muted); font-size: 12.5px; }
-.convo-item { border: 1px solid var(--rule); border-radius: var(--radius-m); background: var(--surface); }
+.convo-item { border: 1px solid var(--rule); border-radius: var(--radius-m); background: var(--surface);
+  content-visibility: auto; contain-intrinsic-size: auto 46px; }
 .convo-item.is-current { border-color: var(--accent-tint-2); box-shadow: inset 3px 0 0 var(--accent); }
 .convo-toggle {
   display: flex; align-items: center; gap: 10px; width: 100%;

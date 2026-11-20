@@ -143,3 +143,20 @@ test('compactCount shortens large sidebar counts', () => {
   assert.equal(compactCount(40005), '40K');
   assert.equal(compactCount(1250000), '1.3M');
 });
+
+test('date formatting reuses its Intl.DateTimeFormat objects (issue #22)', () => {
+  const Orig = Intl.DateTimeFormat;
+  let made = 0;
+  Intl.DateTimeFormat = function (...args) { made++; return new Orig(...args); };
+  try {
+    const now = new Date('2024-05-10T12:00:00Z');
+    for (let i = 0; i < 200; i++) {
+      formatListDate(new Date(Date.UTC(2020 + (i % 5), i % 12, 1 + (i % 28))).toISOString(), now, { timeZone: 'UTC' });
+      isoLocal('2024-05-10T12:00:00Z', 'UTC');
+    }
+  } finally {
+    Intl.DateTimeFormat = Orig;
+  }
+  assert.ok(made <= 10, `${made} formatters built for 400 calls`);
+  assert.equal(formatListDate('2024-05-10T09:30:00Z', new Date('2024-05-10T12:00:00Z'), { timeZone: 'UTC', locale: 'en-US' }), '9:30 AM');
+});
