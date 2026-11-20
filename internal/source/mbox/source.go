@@ -161,7 +161,6 @@ func (s *mboxSource) entry(m *message) source.Entry {
 			// from X-Mozilla-Draft-Info.
 			e.Flags = sm.Flags&^source.HasAttachment | hm.Flags&source.Draft
 			e.Tags = appendUnique(e.Tags, sm.Tags...)
-			e.Labels = appendUnique(e.Labels, sm.Labels...)
 			for _, p := range sm.Props {
 				if !containsProp(e.Props, p) {
 					e.Props = append(e.Props, p)

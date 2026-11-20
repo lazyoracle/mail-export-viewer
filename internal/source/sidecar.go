@@ -8,9 +8,9 @@ type SidecarMeta struct {
 	// Flags replace the header-derived flags (the sidecar is the more
 	// recent truth: Thunderbird updates it, not the mbox), except
 	// HasAttachment, which Resolve derives from the message.
-	Flags        Flags
-	Tags, Labels []string // display names, appended to Entry.Tags/Labels (duplicates dropped)
-	Props        []Prop   // appended to Entry.Props
+	Flags Flags
+	Tags  []string // display names, appended to Entry.Tags (duplicates dropped)
+	Props []Prop   // appended to Entry.Props
 }
 
 // TagStyle is how a tag is shown: display name and colour ("#RRGGBB", or ""

@@ -154,7 +154,7 @@
 // warning, use sc). The mbox source calls SidecarFor(path) once per mbox
 // file in Open or Scan, then for every message calls Lookup(Message-ID,
 // From_ line offset) and, when ok, replaces its header-derived flags by
-// SidecarMeta.Flags (keeping HasAttachment) and appends Tags, Labels and
+// SidecarMeta.Flags (keeping HasAttachment) and appends Tags and
 // Props (dropping duplicates). It adds Sidecar.Inputs() to its own Inputs.
 // SidecarMeta.Tags are display names already. TagInfo maps tag keys (as
 // written in X-Mozilla-Keys and the .msf "keywords" cell) to display name

@@ -229,7 +229,7 @@ func TestSidecar(t *testing.T) {
 	path := writeFile(t, filepath.Join(dir, "Inbox"), mboxOf(msgGm, msgTB, msgPlain))
 	sc := &stubSidecar{
 		byID: map[string]source.SidecarMeta{
-			"gm@example.com": {Flags: source.Answered, Tags: []string{"Work", "Inbox"}, Labels: []string{"Inbox", "Extra"},
+			"gm@example.com": {Flags: source.Answered, Tags: []string{"Work", "Inbox"},
 				Props: []source.Prop{{Key: "X-Mailer", Value: "Fake 1"}, {Key: "Priority", Value: "High"}}},
 		},
 		inputs: []string{filepath.Join(dir, "Inbox.msf")},
@@ -242,10 +242,11 @@ func TestSidecar(t *testing.T) {
 	}
 	es, _ := scan(t, src)
 	// Sidecar flags replace header flags (Unread/Starred dropped); header
-	// tags/labels/props are kept and sidecar ones appended without duplicates.
+	// tags/labels/props are kept and sidecar tags and props appended without
+	// duplicates (a sidecar has no labels).
 	if es[0].Flags != source.Answered ||
 		!reflect.DeepEqual(es[0].Tags, []string{"Work", "Inbox"}) ||
-		!reflect.DeepEqual(es[0].Labels, []string{"Inbox", "Unread", "Starred", "Trips", "Extra"}) ||
+		!reflect.DeepEqual(es[0].Labels, []string{"Inbox", "Unread", "Starred", "Trips"}) ||
 		!reflect.DeepEqual(es[0].Props, []source.Prop{{Key: "X-Mailer", Value: "Fake 1"}, {Key: "Priority", Value: "High"}}) {
 		t.Errorf("sidecar row: flags %q tags %q labels %q props %q", es[0].Flags, es[0].Tags, es[0].Labels, es[0].Props)
 	}

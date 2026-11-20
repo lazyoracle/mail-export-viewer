@@ -12,7 +12,8 @@ folder reader) and adds the formats they lack. Nothing is ever written next to t
   - **mbox** — Gmail Takeout (`X-Gmail-Labels`), Thunderbird local folders (+ `.sbd` nesting), mutt, etc.
     mboxo/mboxrd/mboxcl, LF/CRLF, BOM.
   - **msf** — Thunderbird Mork summary files. Parsed as a *metadata sidecar* of the mbox next to it
-    (tags/keywords, read/starred/replied/forwarded flags, labels). Pointing at a `.msf` opens its mbox.
+    (tags/keywords, read/starred/replied/forwarded flags; Thunderbird's old `$label1..5` labels are
+    keywords and show as tags). Pointing at a `.msf` opens its mbox.
     Tag display names/colours come from the profile's `prefs.js` when it can be found.
   - **pst** (Outlook Windows, Unicode PST/OST-style files; compressible-encryption supported) — pure Go reader.
   - **olm** (Outlook for Mac export, a zip of XML) — pure Go reader.
