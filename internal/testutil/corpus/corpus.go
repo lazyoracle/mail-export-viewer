@@ -162,6 +162,7 @@ type gen struct {
 	vocab []string
 	seq   int
 	clock time.Time
+	step  int // largest gap between consecutive dates, in seconds
 }
 
 // Generate writes the corpus under dir (created if needed; it should be
@@ -183,6 +184,12 @@ func Generate(dir string, o Options) (*Manifest, error) {
 		root:  root,
 		m:     &Manifest{Root: root, TagColors: map[string]string{}, BigToken: "qzbigattachment"},
 		clock: time.Date(2012, 1, 2, 9, 0, 0, 0, time.UTC),
+	}
+	// Dates advance by up to a day (about 12 years for 10k messages);
+	// bulk corpora spread theirs over about 15 years.
+	g.step = 86400
+	if n := o.Bulk + o.BulkThread; n > 10000 {
+		g.step = max(60, int(15*365*86400/int64(n))*2)
 	}
 	g.vocab = vocabulary(g.r)
 	g.m.CommonWord = g.vocab[0]
@@ -227,7 +234,7 @@ func (g *gen) token() string {
 
 // date returns the next message date (strictly increasing, whole seconds).
 func (g *gen) date() time.Time {
-	g.clock = g.clock.Add(time.Duration(3600+g.r.IntN(86400)) * time.Second)
+	g.clock = g.clock.Add(time.Duration(1+g.r.IntN(g.step)) * time.Second)
 	return g.clock
 }
 

@@ -8,85 +8,21 @@
 // Environment: CHROME (browser binary), BASE (server URL ending in /),
 // OUT (directory for screenshots and the browser profile; never inside
 // the repository). Exits 1 when a check fails.
-import { spawn } from 'node:child_process';
-import { writeFileSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { launch, sleep } from './cdp.mjs';
 
 const { CHROME, BASE, OUT } = process.env;
 if (!CHROME || !BASE || !OUT) {
   console.error('set CHROME, BASE and OUT');
   process.exit(2);
 }
-mkdirSync(OUT, { recursive: true });
-const profile = join(OUT, 'profile');
-
-const proc = spawn(CHROME, ['--headless', '--no-sandbox', '--remote-debugging-port=0', '--disable-gpu',
-  `--user-data-dir=${profile}`, 'about:blank'], { stdio: 'ignore' });
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-let PORT = 0;
-for (let i = 0; i < 100 && !PORT; i++) {
-  const f = join(profile, 'DevToolsActivePort');
-  if (existsSync(f)) PORT = Number(readFileSync(f, 'utf8').split('\n')[0]);
-  else await sleep(100);
+let b;
+try {
+  b = await launch(CHROME, BASE, OUT);
+} catch (e) {
+  console.error(e.message);
+  process.exit(2);
 }
-if (!PORT) { console.error('browser did not start'); proc.kill(); process.exit(2); }
-for (let i = 0; i < 50; i++) {
-  try { await (await fetch(`http://127.0.0.1:${PORT}/json/version`)).json(); break; } catch { await sleep(100); }
-}
-const tgt = await (await fetch(`http://127.0.0.1:${PORT}/json/new?about:blank`, { method: 'PUT' })).json();
-const ws = new WebSocket(tgt.webSocketDebuggerUrl);
-await new Promise((r) => ws.addEventListener('open', r));
-let nextId = 1;
-const pending = new Map();
-const problems = [];
-const requests = [];
-ws.addEventListener('message', (ev) => {
-  const m = JSON.parse(ev.data);
-  if (m.id && pending.has(m.id)) { const p = pending.get(m.id); pending.delete(m.id); m.error ? p.reject(new Error(JSON.stringify(m.error))) : p.resolve(m.result); return; }
-  if (m.method === 'Runtime.exceptionThrown') problems.push('exception: ' + JSON.stringify(m.params.exceptionDetails.exception?.description || m.params.exceptionDetails.text));
-  if (m.method === 'Runtime.consoleAPICalled' && ['error', 'warning'].includes(m.params.type)) problems.push('console: ' + m.params.args.map((a) => a.value || a.description).join(' '));
-  if (m.method === 'Log.entryAdded' && m.params.entry.level !== 'verbose') problems.push('log: ' + m.params.entry.text + ' ' + (m.params.entry.url || ''));
-  if (m.method === 'Network.requestWillBeSent') requests.push(m.params.request.url);
-});
-const send = (method, params = {}) => new Promise((resolve, reject) => {
-  const id = nextId++;
-  pending.set(id, { resolve, reject });
-  ws.send(JSON.stringify({ id, method, params }));
-});
-await send('Runtime.enable');
-await send('Log.enable');
-await send('Network.enable');
-await send('Page.enable');
-
-async function viewport(width, height, mobile = false) {
-  await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile });
-}
-async function scheme(dark) {
-  await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: dark ? 'dark' : 'light' }] });
-}
-async function go(hash) {
-  await send('Page.navigate', { url: BASE + hash });
-  await sleep(900);
-}
-async function evaluate(expr) {
-  const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true });
-  if (r.exceptionDetails) throw new Error('eval: ' + JSON.stringify(r.exceptionDetails));
-  return r.result.value;
-}
-async function shot(name) {
-  await sleep(350);
-  const r = await send('Page.captureScreenshot', { format: 'png' });
-  writeFileSync(`${OUT}/${name}.png`, Buffer.from(r.data, 'base64'));
-  console.log('shot', name);
-}
-async function key(k, code = k, text = k.length === 1 ? k : undefined) {
-  await send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, text, windowsVirtualKeyCode: k === 'Enter' ? 13 : k === 'Escape' ? 27 : k === 'ArrowDown' ? 40 : 0 });
-  await send('Input.dispatchKeyEvent', { type: 'keyUp', key: k, code });
-  await sleep(150);
-}
-async function type(s) {
-  for (const ch of s) { await send('Input.insertText', { text: ch }); await sleep(30); }
-}
+const { send, problems, requests, viewport, scheme, go, evaluate, shot, key, type } = b;
 
 const checks = [];
 let failed = false;
@@ -243,6 +179,5 @@ console.log(checks.join('\n'));
 // The stale-link check requests a missing message on purpose.
 const real = [...new Set(problems)].filter((p) => !p.includes('/api/messages/999999'));
 console.log('problems:\n' + real.join('\n'));
-ws.close();
-proc.kill();
+b.close();
 process.exit(failed || real.length ? 1 : 0);
