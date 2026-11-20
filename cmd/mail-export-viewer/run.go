@@ -146,7 +146,7 @@ func parseArgs(args []string, stdout, stderr io.Writer) (config, int) {
 	fs.BoolVar(&cfg.noOpen, "no-open", false, "do not open a browser")
 	fs.BoolVar(&cfg.includeDeleted, "include-deleted", false, "show messages flagged as deleted")
 	fs.BoolVar(&cfg.allowRemote, "allow-remote", false, "allow a non-loopback -addr; WARNING: exposes ALL your mail to the network with no authentication")
-	fs.Var(&cfg.allowedHosts, "allowed-host", "extra Host name or IP accepted with -allow-remote (bare name, no port; repeatable)")
+	fs.Var(&cfg.allowedHosts, "allowed-host", "extra Host name or IP to accept; requires -allow-remote (bare name, no port; repeatable)")
 	showVersion := fs.Bool("version", false, "print the version and exit")
 	flags, rest := reorder(fs, args)
 	if err := fs.Parse(flags); err != nil {
@@ -172,6 +172,10 @@ func parseArgs(args []string, stdout, stderr io.Writer) (config, int) {
 	cfg.input = rest[0]
 	if _, _, err := net.SplitHostPort(cfg.addr); err != nil {
 		fmt.Fprintf(stderr, "%s: invalid -addr %q: %v\n", prog, cfg.addr, err)
+		return cfg, 2
+	}
+	if len(cfg.allowedHosts) > 0 && !cfg.allowRemote {
+		fmt.Fprintf(stderr, "%s: -allowed-host requires -allow-remote: on the default loopback listener only localhost names are accepted, which protects against DNS rebinding\n", prog)
 		return cfg, 2
 	}
 	if !cfg.allowRemote && !isLoopbackAddr(cfg.addr) {

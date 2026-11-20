@@ -12,7 +12,8 @@ so other origins cannot read it.
 - **Methods.** Only `GET` and `HEAD` are accepted. Any other method gets
   `405` with `Allow: GET, HEAD`.
 - **Host.** The `Host` header must be `localhost`, `127.0.0.1` or `[::1]`,
-  with any port, or a host added with `-allowed-host`. Any other value
+  with any port, or a host added with `-allowed-host` (only accepted
+  together with `-allow-remote`). Any other value
   gets `403` (`forbidden_host`). This protects against DNS rebinding.
 - **Paths.** Path segments are percent-decoded one at a time, so `%2F`
   inside a Content-ID stays part of that segment. Empty segments (`//`),

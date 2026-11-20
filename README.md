@@ -172,7 +172,7 @@ or two.
 |---|---|---|
 | `-addr host:port` | `127.0.0.1:8080` | Address to listen on. Without `-addr`, if the port is busy, the next 20 ports are tried. A non-loopback address is refused unless you also pass `-allow-remote`. |
 | `-allow-remote` | off | Allow a non-loopback `-addr`. **Warning:** there is no authentication, so anyone who can reach the port can read all of your mail. |
-| `-allowed-host name` | | An extra `Host` name or IP to accept with `-allow-remote`. Give a bare name with no port. Repeatable. |
+| `-allowed-host name` | | An extra `Host` name or IP to accept. Requires `-allow-remote` (without it the command exits with a usage error). Give a bare name with no port. Repeatable. |
 | `-cache-dir dir` | `<user cache dir>/mail-export-viewer` | Where to keep the index. |
 | `-include-deleted` | off | Show messages flagged as deleted by default. The UI can still switch per view. |
 | `-no-open` | off | Do not open a browser. |

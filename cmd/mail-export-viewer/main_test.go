@@ -52,6 +52,7 @@ func TestParseArgs(t *testing.T) {
 		{"repeatable allowed-host", []string{"-allow-remote", "-addr", "0.0.0.0:80", "-allowed-host", "a", "-allowed-host", "b", "in"}, -1, func(c config) bool {
 			return len(c.allowedHosts) == 2 && c.allowedHosts[1] == "b" && c.allowRemote
 		}, ""},
+		{"allowed-host needs allow-remote", []string{"-allowed-host", "a", "in"}, 2, nil, "-allowed-host requires -allow-remote"},
 		{"version", []string{"-version"}, 0, nil, "mail-export-viewer "},
 		{"help", []string{"-h"}, 0, nil, "usage:"},
 		{"no path", nil, 2, nil, "usage:"},
