@@ -64,6 +64,23 @@ export function sourceTrees(facets) {
   });
 }
 
+/** The first node (depth first, in source order) for which pred holds, or null. */
+export function findNode(trees, pred) {
+  const walk = (nodes) => {
+    for (const n of nodes) {
+      if (pred(n)) return n;
+      const f = walk(n.children);
+      if (f) return f;
+    }
+    return null;
+  };
+  for (const t of trees) {
+    const f = walk(t.nodes);
+    if (f) return f;
+  }
+  return null;
+}
+
 /**
  * The scopes [ and ] step through: All mail, then each source followed by
  * its folders that are visible (not inside a collapsed node).

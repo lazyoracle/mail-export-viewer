@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   emptyList, startLoading, applyPage, failPage,
-  clampIndex, progressInfo, shouldRefresh, sourceWarnings, collapseThreads,
+  clampIndex, progressInfo, shouldRefresh, sourceWarnings, visibleRows,
 } from '../static/js/state.js';
 import { ApiError, readJSON } from '../static/js/api.js';
 import { buildSrcdoc } from '../static/js/srcdoc.js';
@@ -91,10 +91,13 @@ test('sourceWarnings lists sources with warnings or errors, worst first', () => 
   assert.deepEqual(sourceWarnings(null), []);
 });
 
-test('collapseThreads keeps the first row of each conversation', () => {
-  const items = [{ id: 5, threadId: 1 }, { id: 4, threadId: 2 }, { id: 3, threadId: 1 }, { id: 2, threadId: 0 }, { id: 1, threadId: 0 }];
-  assert.deepEqual(collapseThreads(items).map((i) => i.id), [5, 4, 2, 1], 'threadId 0 means not threaded yet');
-  assert.deepEqual(collapseThreads([]), []);
+test('visibleRows keeps the first row of each conversation across pages', () => {
+  const seen = new Set();
+  const page1 = [{ id: 5, threadId: 1 }, { id: 4, threadId: 2 }, { id: 3, threadId: 1 }];
+  const page2 = [{ id: 2, threadId: 0 }, { id: 1, threadId: 2 }, { id: 0, threadId: 0 }];
+  assert.deepEqual(visibleRows(page1, seen, true).map((i) => i.id), [5, 4]);
+  assert.deepEqual(visibleRows(page2, seen, true).map((i) => i.id), [2, 0], 'threadId 0 means not threaded yet');
+  assert.deepEqual(visibleRows(page1, new Set(), false).map((i) => i.id), [5, 4, 3], 'off: every message');
 });
 
 test('readJSON surfaces the server error message', async () => {

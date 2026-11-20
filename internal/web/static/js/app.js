@@ -7,7 +7,7 @@ import { api, PAGE_SIZE } from './api.js';
 import { h, icon, clear, append, $ } from './dom.js';
 import { plural, compactCount } from './format.js';
 import {
-  emptyList, startLoading, applyPage, failPage, clampIndex, progressInfo, shouldRefresh, countText, sourceWarnings,
+  emptyList, startLoading, applyPage, failPage, clampIndex, progressInfo, shouldRefresh, countText, sourceWarnings, visibleRows,
 } from './state.js';
 import { parseRoute, formatRoute, sameRoute, sameList, SORTS, apiSort } from './router.js';
 import {
@@ -18,11 +18,14 @@ import { debounce, latest } from './debounce.js';
 import { createDispatcher, SHORTCUTS } from './shortcuts.js';
 import { copyText } from './clipboard.js';
 import { renderRow, rowId } from './list.js';
-import { renderTermList, FILTER_FROM } from './labels.js';
-import { FLAGS, flagQuery } from './flags.js';
+import { renderTermList, markActiveTerms, FILTER_FROM } from './labels.js';
+import { FLAGS, flagQuery, markFlags } from './flags.js';
 import { sourceTrees, scopeOrder, renderSourceTrees, kindLabel } from './tree.js';
 import { renderMessage, renderConversation, renderReaderMessage } from './reader.js';
 import { renderStats } from './stats.js';
+import {
+  deletedMode as modeFor, serverDeleted, openError, scopeTitle, threadSize, flagPressed, stepScope, loadCollapsed,
+} from './logic.js';
 import { loadTheme, saveTheme, nextTheme, themeLabel } from './theme.js';
 
 const SEARCH_DELAY = 250;
@@ -54,7 +57,7 @@ const state = {
   facets: null,
   facetsError: null,
   trees: [],
-  collapsed: new Set(loadPref('collapsed', [])),
+  collapsed: loadCollapsed(loadPref('collapsed', []), null),
   termOpen: loadPref('terms-open', { label: true, category: true, tag: true }),
   termFilter: { label: '', category: '', tag: '' },
   list: emptyList(),
@@ -132,7 +135,7 @@ const termSections = Object.fromEntries(TERM_KINDS.map((k) => {
     panel: $(`terms-${k}-panel`),
     total: section.querySelector('.side-total'),
     filterWrap: section.querySelector('.term-filter'),
-    filter: section.querySelector('.term-filter input'),
+    filter: section.querySelector('.term-filter').querySelector('input'),
     list: section.querySelector('.term-list'),
   }];
 }));
@@ -142,9 +145,7 @@ const narrow = () => window.matchMedia('(max-width: 759px)').matches;
 
 /** The deleted mode in effect: the route's, else the server default. */
 function deletedMode(r = route()) {
-  if (r.deleted) return r.deleted;
-  if (state.status) return state.status.includeDeleted ? 'include' : 'hide';
-  return '';
+  return modeFor(r, state.status);
 }
 
 // ---- theme ----
@@ -248,35 +249,6 @@ el.sidebar.addEventListener('click', (e) => {
 
 // ---- sidebar ----
 
-function scopeTitle(r = route()) {
-  let name = 'All mail';
-  if (r.folderId) {
-    const n = findFolder(r.folderId);
-    name = n ? n.path : 'Folder';
-  } else if (r.folder) name = r.folder;
-  else if (r.source) {
-    const s = (state.facets && state.facets.sources.find((x) => x.id === r.source)) || null;
-    name = s ? s.name : 'Source';
-  }
-  return r.deleted === 'only' ? `${name}: deleted` : name;
-}
-
-function findFolder(folderId) {
-  const walk = (nodes) => {
-    for (const n of nodes) {
-      if (n.folderId === folderId) return n;
-      const f = walk(n.children);
-      if (f) return f;
-    }
-    return null;
-  };
-  for (const t of state.trees) {
-    const f = walk(t.nodes);
-    if (f) return f;
-  }
-  return null;
-}
-
 function renderSidebar() {
   const r = route();
   const f = state.facets;
@@ -292,7 +264,7 @@ function renderSidebar() {
   clear(el.flagList).append(...FLAGS.map((info) => {
     const fc = flags.find((x) => x.name === info.name);
     const n = fc ? fc.count : 0;
-    const pressed = info.name === 'deleted' ? r.deleted === 'only' : hasOperator(q, ...flagQuery(info.name));
+    const pressed = flagPressed(info.name, q, r);
     if (!n && !pressed) return null;
     return h('li', {}, h('button', {
       class: 'flag-btn', type: 'button', dataset: { flag: info.name },
@@ -394,6 +366,7 @@ async function loadFacets() {
     state.facets = res.value;
     state.facetsError = null;
     state.trees = sourceTrees(state.facets);
+    state.collapsed = loadCollapsed([...state.collapsed], state.trees);
   } catch (e) {
     if (e && e.name === 'AbortError') return;
     state.facetsError = e.message;
@@ -425,7 +398,8 @@ function editQuery(q) {
   commitSearch(q);
 }
 
-function renderFilters() {
+/** Chips, sort, deleted mode and the conversation toggle; full: the sidebar too. */
+function renderFilters({ full = true } = {}) {
   const q = el.search.value;
   const chips = queryChips(q);
   el.chips.hidden = !chips.length;
@@ -446,7 +420,16 @@ function renderFilters() {
   el.sort.value = effectiveSort({ q: r.q, sort: r.sort });
   el.deletedMode.value = deletedMode(r) || 'hide';
   el.threadToggle.setAttribute('aria-pressed', String(state.threaded));
-  renderSidebar();
+  if (full) renderSidebar();
+  else markSidebar();
+}
+
+/** While typing: only which flags and terms are pressed (no rebuild). */
+function markSidebar() {
+  const q = el.search.value;
+  const r = route();
+  markFlags(el.flagList, (name) => flagPressed(name, q, r));
+  for (const kind of TERM_KINDS) markActiveTerms(termSections[kind].list, (name) => hasOperator(q, kind, name));
 }
 
 el.chips.addEventListener('click', (e) => {
@@ -514,7 +497,7 @@ function pickSuggest(i) {
   el.search.setSelectionRange(caret, caret);
   el.search.focus();
   state.searching = true;
-  renderFilters();
+  renderFilters({ full: false });
   searchSoon(value);
   updateSuggest();
 }
@@ -528,7 +511,7 @@ el.suggestBox.addEventListener('mousedown', (e) => {
 
 el.search.addEventListener('input', () => {
   state.searching = true;
-  renderFilters();
+  renderFilters({ full: false });
   renderListHead();
   searchSoon(el.search.value);
   updateSuggest();
@@ -611,7 +594,7 @@ el.sort.addEventListener('change', () => navigate({ ...route(), sort: el.sort.va
 
 el.deletedMode.addEventListener('change', () => {
   const v = el.deletedMode.value;
-  const def = state.status ? (state.status.includeDeleted ? 'include' : 'hide') : '';
+  const def = serverDeleted(state.status);
   navigate({ ...route(), message: null, deleted: v === def ? '' : v });
 });
 
@@ -628,7 +611,7 @@ window.addEventListener('click', (e) => {
 
 function renderListHead() {
   const r = route();
-  const name = scopeTitle(r);
+  const name = scopeTitle(r, state.facets, state.trees);
   el.listTitle.textContent = name;
   document.title = r.view === 'stats' ? `Statistics - ${APP_NAME}` : (r.q ? `${r.q} in ${name} - ${APP_NAME}` : `${name} - ${APP_NAME}`);
   const typed = state.searching ? el.search.value : r.q;
@@ -721,11 +704,7 @@ function appendRows(items) {
   const r = route();
   const showFolder = !r.folderId && !r.folder;
   const frag = document.createDocumentFragment();
-  for (const it of items) {
-    if (state.threaded && it.threadId) {
-      if (state.seenThreads.has(it.threadId)) continue;
-      state.seenThreads.add(it.threadId);
-    }
+  for (const it of visibleRows(items, state.seenThreads, state.threaded)) {
     state.rows.push(it);
     frag.append(renderRow(it, now, state.terms, { showFolder }));
   }
@@ -744,6 +723,7 @@ function clearRows() {
 /** Reloads the list from the first page. */
 function resetList() {
   listReq.cancel();
+  redrawGen++;
   state.list = emptyList();
   state.terms = highlightTerms(route().q);
   clearRows();
@@ -753,15 +733,34 @@ function resetList() {
   loadMore();
 }
 
-/** Redraws the loaded items (after the conversation toggle). */
+const REDRAW_CHUNK = 300;
+let redrawGen = 0;
+
+/**
+ * Redraws the loaded items (after the conversation toggle) a chunk per
+ * frame, so thousands of loaded rows do not block the page; holds off
+ * paging until done.
+ */
 function redrawRows() {
   const activeId = state.rows[state.active]?.id;
+  const items = state.list.items;
+  const gen = ++redrawGen;
+  const wasLoading = state.list.loading;
   clearRows();
-  appendRows(state.list.items);
-  const i = state.rows.findIndex((it) => it.id === activeId);
-  if (i >= 0) setActive(i, { scroll: false });
-  renderListHead();
-  requestAnimationFrame(checkSentinel);
+  state.list = { ...state.list, loading: true };
+  let next = 0;
+  const step = () => {
+    if (gen !== redrawGen) return;
+    appendRows(items.slice(next, next + REDRAW_CHUNK));
+    next += REDRAW_CHUNK;
+    const i = state.rows.findIndex((it) => it.id === activeId);
+    if (i >= 0 && state.active !== i) setActive(i, { scroll: false });
+    if (next < items.length) { requestAnimationFrame(step); return; }
+    state.list = { ...state.list, loading: wasLoading };
+    renderListHead();
+    requestAnimationFrame(checkSentinel);
+  };
+  step();
 }
 
 /**
@@ -890,17 +889,6 @@ el.listRefresh.addEventListener('click', () => resetList());
 
 let msgAbort = null;
 
-/** What to say when a message cannot be opened, by error code. */
-function openError(e) {
-  switch (e && e.code) {
-    case 'not_found': return ['This message is no longer in the index.', 'The archive was re-indexed since this link was made. Find the message again in the list.'];
-    case 'stale': return ['The source file changed after it was indexed.', 'Restart the viewer to index the new version.'];
-    case 'gone': return ['The source file is missing or no longer open.', 'Check that the file is still there, then restart the viewer.'];
-    case 'too_large': return ['This message is too large to open (over 256 MB).', 'Download the original from your mail program instead.'];
-    default: return [`This message could not be opened: ${e && e.message}`, ''];
-  }
-}
-
 async function showMessage(id) {
   if (msgAbort) msgAbort.abort();
   if (!id) {
@@ -947,10 +935,10 @@ async function showMessage(id) {
     clearTimeout(slow);
     // A newer selection aborted this request: never paint over it.
     if (ctrl.signal.aborted || e.name === 'AbortError') return;
-    const [text, detail] = openError(e);
-    renderReaderMessage(el.article, text, {
-      error: true, detail, onBack: back,
-      onRetry: ['not_found', 'too_large'].includes(e.code) ? null : () => showMessage(id),
+    const err = openError(e);
+    renderReaderMessage(el.article, err[0], {
+      error: true, detail: err[1], onBack: back,
+      onRetry: err.retry ? () => showMessage(id) : null,
     });
   }
 }
@@ -958,8 +946,7 @@ async function showMessage(id) {
 function setThread(res, item) {
   state.thread = res ? res.items || [] : null;
   state.threadTruncated = Boolean(res && res.truncated);
-  const fromItems = state.thread && state.thread.length ? Math.max(...state.thread.map((t) => t.threadCount || 0)) : 0;
-  state.threadCount = Math.max(fromItems, state.thread ? state.thread.length : 0, (item && item.threadCount) || 0);
+  state.threadCount = threadSize(state.thread, item);
 }
 
 async function copyMessageId(mid) {
@@ -1185,14 +1172,7 @@ function step(delta) {
 }
 
 function stepFolder(delta) {
-  const order = scopeOrder(state.trees, state.collapsed);
-  const r = route();
-  const cur = r.folderId ? `folder:${r.folderId}` : r.source ? `source:${r.source}` : 'all:0';
-  const i = order.findIndex((s) => `${s.kind}:${s.id}` === cur);
-  const next = order[Math.min(order.length - 1, Math.max(0, (i < 0 ? 0 : i) + delta))];
-  if (!next) return;
-  const scope = next.kind === 'folder' ? { folderId: next.id } : next.kind === 'source' ? { source: next.id } : {};
-  navigate(scopeRoute(scope));
+  navigate(scopeRoute(stepScope(scopeOrder(state.trees, state.collapsed), route(), state.trees, delta)));
 }
 
 const ACTIONS = {

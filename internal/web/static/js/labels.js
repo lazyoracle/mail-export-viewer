@@ -48,21 +48,22 @@ function tint(el, t) {
 }
 
 /**
- * A term pill: a button that filters by the term. tabbable: false keeps it
- * out of the tab order (rows are options in a listbox; the keyboard path
- * to a term is the reader or the sidebar). onClick(term) handles clicks.
+ * A term pill: a button that filters by the term; onClick(term) handles
+ * clicks. interactive: false makes a plain span instead, for list rows:
+ * rows are options in a listbox, which must not contain controls (the
+ * keyboard path to a term is the reader or the sidebar; a mouse click on
+ * a row pill still filters, through the list's delegated handler).
  */
-export function pill(t, { tabbable = true, onClick = null } = {}) {
+export function pill(t, { interactive = true, onClick = null } = {}) {
   const cls = ['pill', `pill-${t.kind}`];
   if (t.kind === 'label' && isSystemLabel(t.name)) cls.push('is-system');
   if (safeColor(t.color)) cls.push('has-color');
-  const b = h('button', {
+  const b = h(interactive ? 'button' : 'span', {
     class: cls.join(' '),
-    type: 'button',
+    type: interactive ? 'button' : null,
     title: `${KIND_NAMES[t.kind]}: ${t.name}`,
     dataset: { kind: t.kind, name: t.name },
-    attrs: { tabindex: tabbable ? null : '-1' },
-    on: onClick ? { click: (e) => { if (e && e.stopPropagation) e.stopPropagation(); onClick(t); } } : null,
+    on: interactive && onClick ? { click: (e) => { if (e && e.stopPropagation) e.stopPropagation(); onClick(t); } } : null,
   }, h('span', { class: 'pill-dot', attrs: { 'aria-hidden': 'true' } }), h('span', { class: 'pill-text', text: t.name }));
   return tint(b, t);
 }
@@ -74,7 +75,7 @@ export function rowPills(item, max = 2) {
   const shown = terms.slice(0, max);
   const rest = terms.slice(max);
   return h('span', { class: 'row-labels' },
-    shown.map((t) => pill(t, { tabbable: false })),
+    shown.map((t) => pill(t, { interactive: false })),
     rest.length ? h('span', {
       class: 'pill-more',
       text: `+${rest.length}`,
@@ -123,6 +124,14 @@ export function renderTermList(ul, kind, terms, { isActive = () => false, filter
   if (!shown.length) items.push(h('li', { class: 'term-none', text: 'Nothing matches' }));
   ul.replaceChildren(...items);
   return shown.length;
+}
+
+/** Updates which entries of a rendered list are pressed, in place. */
+export function markActiveTerms(ul, isActive) {
+  for (const b of ul.querySelectorAll('.side-term')) {
+    const on = String(Boolean(isActive(b.dataset.name)));
+    if (b.getAttribute('aria-pressed') !== on) b.setAttribute('aria-pressed', on);
+  }
 }
 
 /** Above this many terms a sidebar section offers a filter box. */

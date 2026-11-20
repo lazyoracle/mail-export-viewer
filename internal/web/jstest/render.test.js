@@ -308,3 +308,32 @@ test('renderConversation: a capped thread says so', () => {
   renderConversation(b, message(), thread.slice(0, 2), { view: 'text', onView() {}, onBack() {}, now, loadMessage: async () => message() });
   assert.equal(b.querySelector('.notice-truncated'), null);
 });
+
+test('attachment links are built from the message id and index, never taken from the payload', () => {
+  const { article } = render(message({
+    attachments: [{ index: 2, filename: 'x.png', contentType: 'image/png', contentId: '', size: 1, inline: false, url: 'javascript:alert(1)//' },
+      { index: 3, filename: 'y.pdf', contentType: 'application/pdf', contentId: '', size: 1, inline: false, url: 'https://evil.example/' }],
+  }));
+  const links = article.querySelectorAll('a.att');
+  assert.deepEqual(links.map((a) => a.href), ['/api/messages/42/attachments/2', '/api/messages/42/attachments/3']);
+  assert.equal(links[0].querySelector('img').src, '/api/messages/42/attachments/2?inline=1');
+});
+
+test('renderConversation mounts a long thread in chunks', () => {
+  const thread = Array.from({ length: 450 }, (_, i) => item({ id: i + 1, threadCount: 450 }));
+  const tasks = [];
+  const a = document.createElement('article');
+  renderConversation(a, message({ id: 3 }), thread, { view: 'text', onView() {}, onBack() {}, now, loadMessage: async () => message(), schedule: (fn) => tasks.push(fn) });
+  const count = () => a.querySelectorAll('.convo-item').length;
+  assert.equal(count(), 200, 'first chunk only');
+  assert.equal(a.querySelector('.convo-item.is-current').dataset.id, '3');
+  while (tasks.length) tasks.shift()();
+  assert.equal(count(), 450);
+  assert.deepEqual(a.querySelectorAll('.convo-item').slice(0, 3).map((e) => e.dataset.id), ['1', '2', '3'], 'order kept');
+  // A redraw cancels the old render's pending chunks.
+  const t2 = [];
+  renderConversation(a, message({ id: 3 }), thread, { view: 'text', onView() {}, onBack() {}, now, loadMessage: async () => message(), schedule: (fn) => t2.push(fn) });
+  renderConversation(a, message({ id: 3 }), thread.slice(0, 2), { view: 'text', onView() {}, onBack() {}, now, loadMessage: async () => message() });
+  while (t2.length) t2.shift()();
+  assert.equal(count(), 2);
+});

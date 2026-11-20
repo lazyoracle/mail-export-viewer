@@ -4,7 +4,7 @@ import { installFakeDOM } from './fakedom.js';
 
 installFakeDOM();
 const {
-  isSystemLabel, orderLabels, itemTerms, pill, rowPills, renderTermList, filterTerms, safeColor, FILTER_FROM,
+  isSystemLabel, orderLabels, itemTerms, pill, rowPills, renderTermList, filterTerms, safeColor, FILTER_FROM, markActiveTerms,
 } = await import('../static/js/labels.js');
 const { avatarHue } = await import('../static/js/format.js');
 
@@ -54,7 +54,7 @@ test('pill: a button naming its kind, text-only, tag colour or a stable hue', ()
   const e = pill({ kind: 'label', name: evil });
   assert.equal(e.textContent, evil);
   assert.ok(!e.descendants().some((d) => d.tagName === 'IMG'));
-  assert.equal(pill({ kind: 'label', name: 'x' }, { tabbable: false }).getAttribute('tabindex'), '-1');
+  assert.equal(pill({ kind: 'label', name: 'x' }, { interactive: false }).tagName, 'SPAN');
   let got = null;
   pill({ kind: 'tag', name: 'n' }, { onClick: (t) => { got = t; } }).dispatch('click', { stopPropagation() {} });
   assert.deepEqual([got.kind, got.name], ['tag', 'n']);
@@ -64,7 +64,6 @@ test('rowPills: up to two pills, then +N with the rest as a tooltip', () => {
   assert.equal(rowPills({ labels: [], categories: [], tags: [] }), null);
   const r = rowPills({ labels: ['Inbox', 'Opened', 'Work'], categories: ['Finance'], tags: [{ name: 'T', color: '' }] });
   assert.deepEqual(r.querySelectorAll('.pill').map((p) => p.textContent), ['Work', 'Finance']);
-  for (const p of r.querySelectorAll('.pill')) assert.equal(p.getAttribute('tabindex'), '-1');
   const more = r.querySelector('.pill-more');
   assert.equal(more.textContent, '+3');
   assert.equal(more.title, 'T\nInbox\nOpened');
@@ -105,4 +104,22 @@ test('renderTermList filter narrows and says when nothing matches', () => {
   assert.equal(ul.querySelector('.term-none').textContent, 'Nothing matches');
   assert.deepEqual(filterTerms(TERMS, '  ').length, 4);
   assert.ok(FILTER_FROM > 5);
+});
+
+test('markActiveTerms only flips aria-pressed on the existing entries', () => {
+  const ul = document.createElement('ul');
+  renderTermList(ul, 'label', TERMS, { isActive: (n) => n === 'alpha' });
+  const before = ul.querySelectorAll('.side-term');
+  markActiveTerms(ul, (n) => n === 'Inbox');
+  const after = ul.querySelectorAll('.side-term');
+  assert.ok(before.every((b, i) => b === after[i]), 'same elements');
+  assert.deepEqual(after.filter((b) => b.getAttribute('aria-pressed') === 'true').map((b) => b.dataset.name), ['Inbox']);
+});
+
+test('row pills are not interactive (they sit inside listbox options)', () => {
+  const r = rowPills({ labels: ['Work'], categories: [], tags: [] });
+  const p = r.querySelector('.pill');
+  assert.equal(p.tagName, 'SPAN');
+  assert.equal(p.getAttribute('tabindex'), null);
+  assert.equal(p.dataset.kind, 'label', 'a mouse click can still filter via delegation');
 });

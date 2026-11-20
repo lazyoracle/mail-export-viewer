@@ -1,4 +1,4 @@
-// Pure UI state helpers: list paging, counts, conversation collapsing,
+// Pure UI state helpers: list paging, counts, conversation rows,
 // indexing progress and warnings. (Hash routes live in router.js.)
 
 /** Message list state. total is the first page's count (later pages say -1;
@@ -40,11 +40,12 @@ export function clampIndex(i, delta, length) {
 }
 
 /**
- * One row per conversation: the first item (in list order) of each
- * threadId. threadId 0 (threading has not run yet) keeps every item.
+ * The rows to show from newly loaded items. threaded: one row per
+ * conversation, the first (in list order) of each threadId, remembered in
+ * seen across pages; threadId 0 (threading has not run yet) keeps the item.
  */
-export function collapseThreads(items) {
-  const seen = new Set();
+export function visibleRows(items, seen, threaded) {
+  if (!threaded) return items.slice();
   return items.filter((it) => {
     if (!it.threadId) return true;
     if (seen.has(it.threadId)) return false;

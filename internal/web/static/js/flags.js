@@ -24,6 +24,14 @@ export function flagQuery(name) {
   return name === 'attachment' ? ['has', 'attachment'] : ['is', name];
 }
 
+/** Updates which quick-filter buttons in ul are pressed, in place. */
+export function markFlags(ul, isPressed) {
+  for (const b of ul.querySelectorAll('.flag-btn')) {
+    const on = String(Boolean(isPressed(b.dataset.flag)));
+    if (b.getAttribute('aria-pressed') !== on) b.setAttribute('aria-pressed', on);
+  }
+}
+
 /**
  * Icons for a message's flags, each with its name for screen readers.
  * Unread is not an icon: the row is styled instead. null when none.

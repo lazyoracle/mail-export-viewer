@@ -110,11 +110,14 @@ function attachmentList(msg) {
     h('h3', { class: 'attachments-title', text: plural(atts.length, 'attachment') }),
     h('ul', { class: 'att-list' }, atts.map((a) => {
       const name = a.filename || `attachment-${a.index}`;
+      // Built from the ids rather than taken from the payload, so a link can
+      // only ever point at this message's attachment on this origin.
+      const url = `/api/messages/${encodeURIComponent(msg.id)}/attachments/${encodeURIComponent(a.index)}`;
       const thumb = isInlineImage(a.contentType)
-        ? h('img', { class: 'att-thumb', src: `${a.url}?inline=1`, alt: '', loading: 'lazy', decoding: 'async' })
+        ? h('img', { class: 'att-thumb', src: `${url}?inline=1`, alt: '', loading: 'lazy', decoding: 'async' })
         : h('span', { class: 'att-thumb att-generic' }, icon('file'));
       return h('li', {},
-        h('a', { class: 'att', href: a.url, title: `Download ${name}` },
+        h('a', { class: 'att', href: url, title: `Download ${name}` },
           thumb,
           h('span', { class: 'att-text' },
             h('span', { class: 'att-name', text: name }),
@@ -270,6 +273,7 @@ function tabPanel(body, current) {
  */
 export function renderMessage(article, msg, opts) {
   const { view, loadRaw = (id) => api.raw(id), now = new Date() } = opts;
+  renders.delete(article); // stop a conversation still being mounted here
   const current = effectiveView(msg, view);
   const body = tabPanel(bodyFor(msg, current, loadRaw), current);
   append(clear(article), [
@@ -300,7 +304,7 @@ export function renderConversation(article, msg, thread, opts) {
   const loadedMsgs = opts.loaded || new Map();
   const current = effectiveView(msg, view);
   const full = Math.max(thread.length, ...thread.map((it) => it.threadCount || 0));
-  const items = thread.map((it) => {
+  const makeItem = (it) => {
     const isCurrent = it.id === msg.id;
     const startOpen = expanded.has(it.id) ? expanded.get(it.id) : isCurrent;
     const panelId = `convo-body-${it.id}`;
@@ -358,7 +362,8 @@ export function renderConversation(article, msg, thread, opts) {
       load();
     });
     return li;
-  });
+  };
+  const ol = h('ol', { class: 'convo', attrs: { 'aria-label': 'Conversation' } });
   append(clear(article), [
     h('header', { class: 'msg-head convo-head' },
       toolbar(msg, current, { ...opts, threadCount: thread.length, threadView: true }),
@@ -367,11 +372,29 @@ export function renderConversation(article, msg, thread, opts) {
         ? `Showing ${thread.length.toLocaleString('en-US')} of ${plural(full, 'message')} in this conversation`
         : `${plural(thread.length, 'message')} in this conversation` })),
     opts.truncated ? notice('notice-truncated', 'thread', `This conversation has ${plural(full, 'message')}. Only the first ${thread.length.toLocaleString('en-US')} are shown here; search to find the others.`) : null,
-    h('ol', { class: 'convo', attrs: { 'aria-label': 'Conversation' } }, items)]);
+    ol]);
+  // Long (up to 5000) threads are mounted a chunk per frame so the page
+  // stays responsive; a newer render of the same article stops the old one.
+  const token = {};
+  renders.set(article, token);
+  const schedule = opts.schedule || defaultSchedule;
+  let next = 0;
+  const mount = () => {
+    if (renders.get(article) !== token) return;
+    const end = Math.min(thread.length, next + CONVO_CHUNK);
+    for (; next < end; next++) ol.append(makeItem(thread[next]));
+    if (next < thread.length) schedule(mount);
+  };
+  mount();
 }
+
+const CONVO_CHUNK = 200;
+const renders = new WeakMap();
+const defaultSchedule = (fn) => (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(fn) : setTimeout(fn, 0));
 
 /** A status or error in place of the message, with optional retry. */
 export function renderReaderMessage(article, text, { error = false, detail = '', onRetry, onBack } = {}) {
+  renders.delete(article);
   clear(article).append(h('div', { class: error ? 'reader-state is-error' : 'reader-state', attrs: { role: error ? 'alert' : 'status' } },
     h('button', { class: 'icon-btn only-narrow reader-state-back', type: 'button', attrs: { 'aria-label': 'Back to message list' }, on: { click: onBack } }, icon('back')),
     h('p', { class: 'reader-state-title', text }),

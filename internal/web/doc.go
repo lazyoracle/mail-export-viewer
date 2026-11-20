@@ -12,9 +12,12 @@
 // querychips (tokenizer mirroring internal/index/query.go, chips,
 // operator autocomplete), labels (labels, categories, coloured tags),
 // flags, tree (folder tree grouped by source), list, reader, stats,
-// format, text, debounce, shortcuts, theme, clipboard, srcdoc. app.js is
-// the controller that wires them to the page; it is checked in a real
-// browser rather than under node.
+// format, text, debounce, shortcuts, theme, clipboard, srcdoc, and logic
+// (the controller's pure decisions). app.js is the controller that wires
+// them to the page; jstest/app.test.js runs it on the real index.html
+// skeleton with a fake fetch, and browsertest/ui.mjs drives it in headless
+// Chromium (TestBrowser, when MEV_CHROME is set; screenshots never go
+// into the repository).
 //
 // # Decisions
 //
@@ -41,7 +44,21 @@
 //     and opens the thread view; counts stay message counts. Threads are
 //     capped by the server (truncated) and the reader says so.
 //   - The list pages through keyset cursors (100 per page) with infinite
-//     scroll rather than DOM virtualisation.
+//     scroll rather than DOM virtualisation. Paging, linkify and the other
+//     text helpers are linear in their input (timed tests with 300k-char
+//     hostile tails); URL candidates over 2048 characters stay text.
+//   - Typing in the search box only flips the pressed state of sidebar
+//     entries; the sidebar is rebuilt when the route changes. Regrouping
+//     the list by conversation and mounting a long thread happen a chunk
+//     per animation frame.
+//   - List rows are listbox options, which must not contain controls, so
+//     their label/category/tag pills are plain spans (a mouse click still
+//     filters through the list's delegated handler); the keyboard path to
+//     a term is the reader's pill buttons or the sidebar.
+//   - Attachment links are built from the message id and part index, not
+//     taken from the payload's url.
+//   - Collapsed tree state is read from localStorage as an array of string
+//     keys only and pruned to the current tree on every facets load.
 //   - Theme: system by default, toggled light/dark, stored in localStorage
 //     (theme-init.js applies it before first paint). The message body
 //     always renders on a light "paper" ground, as most HTML mail assumes.

@@ -4,7 +4,7 @@ import { installFakeDOM } from './fakedom.js';
 
 installFakeDOM();
 const { sourceTrees, scopeOrder, renderSourceTrees, kindLabel, sourceLabel } = await import('../static/js/tree.js');
-const { FLAGS, flagQuery, flagMarks } = await import('../static/js/flags.js');
+const { FLAGS, flagQuery, flagMarks, markFlags } = await import('../static/js/flags.js');
 
 const ref = (folderId, sourceId, count = 1, unread = 0) => ({ folderId, sourceId, sourceKind: 'x', source: 's', count, unread });
 const facets = {
@@ -115,4 +115,13 @@ test('sourceLabel keeps the end of a long source path', () => {
   assert.equal(sourceLabel('Thunderbird/Inbox'), 'Thunderbird/Inbox');
   assert.equal(sourceLabel('Profile/Mail/Local Folders/Archives.sbd/2021'), 'Archives/2021');
   assert.equal(sourceLabel('a/b/backup.olm'), 'b/backup.olm');
+});
+
+test('markFlags flips aria-pressed in place', () => {
+  const ul = document.createElement('ul');
+  const mk = (flag) => { const b = document.createElement('button'); b.className = 'flag-btn'; b.dataset.flag = flag; b.setAttribute('aria-pressed', 'false'); ul.append(b); return b; };
+  const a = mk('starred');
+  const b = mk('unread');
+  markFlags(ul, (f) => f === 'unread');
+  assert.deepEqual([a.getAttribute('aria-pressed'), b.getAttribute('aria-pressed')], ['false', 'true']);
 });
