@@ -17,8 +17,10 @@ import (
 )
 
 // schemaVersion is stored in PRAGMA user_version. A database with another
-// non-zero version is a stale cache and is rebuilt from scratch.
-const schemaVersion = 3
+// non-zero version is a stale cache and is rebuilt from scratch. It is
+// also raised when readers derive other data from unchanged files (4:
+// Gmail Trash no longer sets Deleted).
+const schemaVersion = 4
 
 // ErrNotRegular is returned by Open when the database or lock path is a
 // symlink or otherwise not a regular file.
@@ -158,7 +160,7 @@ DROP INDEX IF EXISTS messages_subject_sort;
 // Options configure a Store.
 type Options struct {
 	// IncludeDeleted lists messages flagged Deleted (expunged-not-compacted
-	// Thunderbird mail, Gmail Trash, Outlook Deleted Items flags) like any
+	// Thunderbird mail, OLM messages marked deleted) like any
 	// other. By default they are hidden from lists, searches and counts,
 	// unless a query asks for is:deleted.
 	IncludeDeleted bool

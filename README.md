@@ -272,12 +272,11 @@ These system labels also set flags:
 | Starred | starred |
 | Important | important |
 | Spam | junk |
-| Trash | deleted |
 | Drafts | draft |
 
-The labels themselves are kept too. Because Trash sets the deleted flag,
-messages in Trash are hidden by default (see
-[Deleted messages](#deleted-messages)).
+The labels themselves are kept too. `Trash` is an ordinary label: messages
+in Gmail's Trash are shown, like the Deleted Items folder of Outlook and the
+Trash folder of Thunderbird. Use `-label:Trash` to leave them out.
 
 ### Outlook for Windows (PST)
 
@@ -476,7 +475,8 @@ The viewer marks these with the **deleted** flag:
 - **Thunderbird**: messages marked deleted but not yet removed by compacting
   (`X-Mozilla-Status` 0x8, `X-Mozilla-Status2` IMAP-deleted, or the
   Expunged/IMAP-deleted bits in the `.msf`).
-- **Gmail Takeout**: messages with the `Trash` label.
+- **Gmail Takeout**: nothing gets this flag. `Trash` is an ordinary label
+  (see [Gmail](#gmail-google-takeout)).
 - **OLM**: messages whose deleted element is set.
 - **PST**: nothing gets this flag. The Deleted Items folder is an ordinary
   folder, and data that Outlook deleted inside the file is never recovered.

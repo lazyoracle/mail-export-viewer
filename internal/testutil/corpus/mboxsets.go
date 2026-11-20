@@ -29,7 +29,8 @@ var gmailLabelSets = []struct {
 	{"Inbox, Work ,Work,  ", []string{"Inbox", "Work"}},
 }
 
-// gmailFlags maps Gmail system labels to the flags they set.
+// gmailFlags maps Gmail system labels to the flags they set (Trash sets
+// none: it is an ordinary label).
 func gmailFlags(labels []string) source.Flags {
 	var f source.Flags
 	for _, l := range labels {
@@ -42,8 +43,6 @@ func gmailFlags(labels []string) source.Flags {
 			f |= source.Important
 		case "spam":
 			f |= source.Junk
-		case "trash":
-			f |= source.Deleted
 		case "drafts", "draft":
 			f |= source.Draft
 		}

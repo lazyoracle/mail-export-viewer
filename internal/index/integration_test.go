@@ -108,9 +108,9 @@ func TestIntegrationMixedDirectory(t *testing.T) {
 		}
 	}
 
-	// Gmail Trash is hidden: 5 visible.
+	// Gmail Trash is an ordinary label (not deleted): all 6 visible.
 	all := search(t, s, SearchParams{Limit: 100})
-	if all.Total != 5 {
+	if all.Total != 6 {
 		t.Errorf("total = %d", all.Total)
 	}
 	f := facets(t, s)
@@ -118,7 +118,7 @@ func TestIntegrationMixedDirectory(t *testing.T) {
 	for _, l := range f.Labels {
 		labels[l.Name] = l.Count
 	}
-	if labels["Travel"] != 1 || labels["Inbox"] != 1 {
+	if labels["Travel"] != 1 || labels["Inbox"] != 1 || labels["Trash"] != 1 {
 		t.Errorf("labels = %+v", f.Labels)
 	}
 	if !reflect.DeepEqual(f.Categories, []TermCount{{Name: "Finance", Count: 1, Unread: 1}}) {
@@ -146,7 +146,8 @@ func TestIntegrationMixedDirectory(t *testing.T) {
 		"is:starred":                   2, // Thunderbird 0x4, Outlook flagged
 		"has:attachment":               1,
 		"folder:archive":               1, // Local Folders/Inbox/Archive
-		"is:deleted":                   1,
+		"is:deleted":                   0,
+		"label:trash":                  1, // shown by default
 		"budget":                       1,
 		"dan":                          4,
 		`folder:"Local Folders/Inbox"`: 1,
@@ -170,13 +171,13 @@ func TestIntegrationMixedDirectory(t *testing.T) {
 			t.Errorf("loaded %q for row %q", msg.Subject, r.Subject)
 		}
 	}
-	// Threading joins the Gmail reply (even though it is in Trash).
+	// Threading joins the Gmail reply (in Trash, which is just a label).
 	g := search(t, s, SearchParams{Q: `subject:"gmail hello"`, Sort: "date_asc"}).Items
-	if len(g) != 1 {
+	if len(g) != 2 {
 		t.Fatalf("gmail = %+v", g)
 	}
-	if th, _ := s.Thread(g[0].ID); len(th) != 1 {
-		t.Errorf("thread shows deleted reply: %+v", th)
+	if th, _ := s.Thread(g[0].ID); len(th) != 2 {
+		t.Errorf("thread lacks the reply in Trash: %+v", th)
 	}
 
 	// Unchanged inputs are reused; a changed one is re-scanned alone.

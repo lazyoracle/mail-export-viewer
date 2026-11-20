@@ -18,7 +18,7 @@ func TestGmailSystemLabelsMapToFlags(t *testing.T) {
 		want   source.Flags
 	}{
 		{"Inbox,Spam", source.Junk},
-		{"Trash", source.Deleted},
+		{"Trash", 0}, // an ordinary label: hiding it would hide the Trash label itself
 		{"Drafts", source.Draft},
 		{"Draft,spam", source.Draft | source.Junk},
 		{"Sent,Trips", 0},

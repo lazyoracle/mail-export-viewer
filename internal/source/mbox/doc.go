@@ -33,8 +33,11 @@
 // # Metadata
 //
 //   - Gmail X-Gmail-Labels (mail.ParseLabels) become Labels; Unread, Starred,
-//     Important, Spam (Junk), Trash (Deleted) and Drafts/Draft (Draft)
-//     (case-insensitive) also set flags and stay as labels.
+//     Important, Spam (Junk) and Drafts/Draft (Draft) (case-insensitive)
+//     also set flags and stay as labels. Trash sets no flag: it is an
+//     ordinary label, shown by default like Outlook's Deleted Items and
+//     Thunderbird's Trash folders (only data the client itself marked
+//     deleted but kept is hidden as Deleted).
 //   - X-Mozilla-Status: no read bit is Unread; 0x2 Answered; 0x4 Starred; 0x8
 //     (expunged, not yet compacted) Deleted; 0x1000 Forwarded. X-Mozilla-Status2
 //     0x00200000 (IMAP deleted) is Deleted; X-Mozilla-Draft-Info marks a Draft.

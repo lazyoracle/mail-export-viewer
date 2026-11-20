@@ -54,8 +54,10 @@ func headerMetadata(h mail.Header, tagInfo map[string]source.TagStyle) headerMet
 	var m headerMeta
 	m.MessageID = firstID(h.Get("Message-ID"))
 
-	// Gmail labels; the system labels Unread, Starred, Important, Spam,
-	// Trash and Drafts also set flags.
+	// Gmail labels; the system labels Unread, Starred, Important, Spam
+	// and Drafts also set flags. Trash does not: it stays an ordinary
+	// label, so its messages are listed (and the label shown) by default,
+	// like Outlook's Deleted Items and Thunderbird's Trash folders.
 	m.Labels = mail.ParseLabels(h.Get("X-Gmail-Labels"))
 	for _, l := range m.Labels {
 		switch {
@@ -67,8 +69,6 @@ func headerMetadata(h mail.Header, tagInfo map[string]source.TagStyle) headerMet
 			m.Flags |= source.Important
 		case strings.EqualFold(l, "Spam"):
 			m.Flags |= source.Junk
-		case strings.EqualFold(l, "Trash"):
-			m.Flags |= source.Deleted
 		case strings.EqualFold(l, "Drafts"), strings.EqualFold(l, "Draft"):
 			m.Flags |= source.Draft
 		}
