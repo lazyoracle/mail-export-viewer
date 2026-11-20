@@ -335,6 +335,9 @@ func TestParseLabels(t *testing.T) {
 			[]string{"Inbox", "Work, Projects", "Work/Projects", "Café, bar", "日本", "Category Updates"}},
 		{"a\x01b", []string{"a b"}},
 		{"", nil},
+		// Quotes inside an encoded word are part of the name (issue #15).
+		{`=?UTF-8?B?UXVvdGUgIjAwMDQi?=,Inbox`, []string{`Quote "0004"`, "Inbox"}},
+		{`=?UTF-8?Q?=22a=22?=, "b"`, []string{`"a"`, "b"}},
 	}
 	for _, tt := range tests {
 		if got := ParseLabels(tt.in); !reflect.DeepEqual(got, tt.want) {

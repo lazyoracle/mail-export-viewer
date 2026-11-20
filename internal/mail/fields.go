@@ -302,8 +302,9 @@ func firstMsgID(s string) string {
 //     and outside encoded words, then each label decoded, so an encoded
 //     name holding a comma stays one label.
 //
-// Quotes around a label are dropped; empty labels and repeats are skipped;
-// control characters become spaces.
+// Quotes of the list syntax are dropped (quotes decoded from an encoded
+// word are kept); empty labels and repeats are skipped; control characters
+// become spaces.
 func ParseLabels(s string) []string {
 	if !utf8.ValidString(s) {
 		s = fallbackDecode([]byte(s))
@@ -325,7 +326,10 @@ func ParseLabels(s string) []string {
 			}
 			return r
 		}, l)
-		l = strings.TrimSpace(strings.Trim(strings.TrimSpace(l), `"`))
+		// The splitters already dropped the quotes of the list syntax;
+		// quotes left here were decoded from an encoded word and are
+		// part of the name.
+		l = strings.TrimSpace(l)
 		if l == "" || seen[l] {
 			continue
 		}
