@@ -1,0 +1,33 @@
+name: ci
+on:
+  push:
+  pull_request:
+# Read-only token everywhere; no job publishes anything.
+permissions:
+  contents: read
+jobs:
+  test:
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - run: make vet
+      - name: tests
+        run: go test -race -count=1 ./...
+      - name: build (CGO off)
+        run: make build && ./mail-export-viewer --version
+      - name: check-pii
+        run: make check-pii
