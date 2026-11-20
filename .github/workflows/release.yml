@@ -6,9 +6,16 @@ on:
 # runs no project code, may write (create the release).
 permissions:
   contents: read
+env:
+  # Use exactly the Go installed below; never download another toolchain.
+  GOTOOLCHAIN: local
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
     steps:
@@ -20,15 +27,28 @@ jobs:
             echo "refusing to release from tag '$TAG' (want v followed by [0-9A-Za-z.+-])" >&2
             exit 1
           fi
+      # TODO(supply chain): pin third-party actions to full commit SHAs (see SECURITY.md).
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # Latest 1.24 patch release (go.mod requires go 1.24.0), so the
+          # binaries carry the newest standard-library fixes of that line.
+          go-version: '1.24.x'
+          check-latest: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - name: test
-        run: go vet ./... && go test -count=1 ./... && make check-pii
+        run: |
+          go version
+          test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+          go vet ./...
+          go test -count=1 -timeout 45m ./...
+          make test-js
+          make check-pii
       - name: cross-build (CGO off) and checksums
         env:
           VERSION: ${{ github.ref_name }}
@@ -37,7 +57,15 @@ jobs:
         env:
           VERSION: ${{ github.ref_name }}
         run: |
-          for f in dist/mail-export-viewer-linux-*; do file "$f"; file "$f" | grep -q 'statically linked' || exit 1; done
+          for f in dist/mail-export-viewer-linux-*; do
+            file "$f"
+            file "$f" | grep -q 'statically linked' || exit 1
+          done
+          for f in dist/mail-export-viewer-darwin-*; do
+            file "$f"
+            file "$f" | grep -q 'Mach-O 64-bit' || exit 1
+          done
+          test "$(ls dist/mail-export-viewer-* | wc -l)" -eq 4
           ./dist/mail-export-viewer-linux-amd64 --version | grep -F -- "$VERSION"
           cd dist && sha256sum -c SHA256SUMS
       - uses: actions/upload-artifact@v4
@@ -47,9 +75,11 @@ jobs:
             dist/mail-export-viewer-*
             dist/SHA256SUMS
           if-no-files-found: error
+          retention-days: 7
   publish:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:

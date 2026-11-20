@@ -6,6 +6,9 @@ on:
 # Read-only token everywhere; no job publishes anything.
 permissions:
   contents: read
+env:
+  # Use exactly the Go installed below; never download another toolchain.
+  GOTOOLCHAIN: local
 jobs:
   test:
     permissions:
@@ -15,20 +18,33 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps:
+      # TODO(supply chain): pin third-party actions to full commit SHAs (see SECURITY.md).
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # Latest 1.24 patch release (go.mod requires go 1.24.0).
+          go-version: '1.24.x'
+          check-latest: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: toolchain
+        run: go version && node --version
       - name: gofmt
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
       - run: make vet
-      - name: tests
-        run: go test -race -count=1 ./...
+      - name: tests (race detector)
+        run: go test -race -count=1 -timeout 45m ./...
+      - name: UI unit tests (node)
+        run: make test-js
       - name: build (CGO off)
         run: make build && ./mail-export-viewer --version
+      - name: cross-build all release targets (CGO off)
+        run: make cross
       - name: check-pii
         run: make check-pii

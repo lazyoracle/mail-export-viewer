@@ -1,0 +1,21 @@
+version: 2
+updates:
+  # Go modules. Updates must still build with Go 1.24 (go.mod: go 1.24.0);
+  # a bump that raises the go directive has to be declined or held back.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      golang-x:
+        patterns: ['golang.org/x/*']
+      modernc:
+        patterns: ['modernc.org/*']
+  # GitHub Actions used by the workflows (keeps tags, or SHA pins once
+  # added, current).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

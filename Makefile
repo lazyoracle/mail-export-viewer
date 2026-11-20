@@ -15,7 +15,7 @@ test:
 test-race:
 	CGO_ENABLED=1 $(GO) test -race ./...
 
-# UI unit tests (node); a no-op until the web UI exists.
+# UI unit tests (node 22, built-in test runner; no npm packages).
 test-js:
 	@if [ -d internal/web/jstest ]; then cd internal/web/jstest && node --test; else echo "no JS tests yet"; fi
 
