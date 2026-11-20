@@ -595,12 +595,21 @@ func TestShutdownWaitBounded(t *testing.T) {
 
 func TestIndexFailureReported(t *testing.T) {
 	dir := testutil.MixedDir(t)
-	h := hooks{index: func(ctx context.Context, st *index.Store, srcs []source.Source) error {
-		return errors.New("disk on fire")
-	}}
-	base, stop, errb := startInProcess(t, h, "-no-open", "-addr", "127.0.0.1:0", "-cache-dir", t.TempDir(), dir)
-	_ = base
-	time.Sleep(200 * time.Millisecond)
+	indexed := make(chan struct{})
+	h := hooks{
+		index: func(ctx context.Context, st *index.Store, srcs []source.Source) error {
+			return errors.New("disk on fire")
+		},
+		indexed: func() { close(indexed) },
+	}
+	_, stop, errb := startInProcess(t, h, "-no-open", "-addr", "127.0.0.1:0", "-cache-dir", t.TempDir(), dir)
+	// Stop only once the failure has been handled, so the run cannot end
+	// (cancelling indexing) before the indexer returned its error.
+	select {
+	case <-indexed:
+	case <-time.After(20 * time.Second):
+		t.Fatal("indexing never returned")
+	}
 	if code := stop(); code != 1 {
 		t.Fatalf("exit %d, want 1", code)
 	}

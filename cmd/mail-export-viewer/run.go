@@ -55,6 +55,9 @@ type config struct {
 type hooks struct {
 	ready func(addr string) // called with the bound address once serving
 	index func(ctx context.Context, st *index.Store, srcs []source.Source) error
+	// indexed is called once the background indexing has returned and its
+	// result has been handled.
+	indexed func()
 }
 
 // usageError is a problem with the command line or the input (exit 2).
@@ -363,6 +366,9 @@ func serve(ctx context.Context, cfg config, stderr io.Writer, h hooks) error {
 	var idxErr error // written before idxDone closes
 	go func() {
 		defer close(idxDone)
+		if h.indexed != nil {
+			defer h.indexed()
+		}
 		err := indexFn(idxCtx, st, srcs)
 		switch {
 		case err == nil:
