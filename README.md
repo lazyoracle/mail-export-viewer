@@ -710,7 +710,10 @@ an issue on GitHub. **Never attach real mail or real exports**, not even
   2,000 messages per second (a single SQLite writer), so a first run on
   1,000,000 messages takes several minutes. Later starts are instant.
 - **UI limits**:
-  - the list grows as you scroll instead of being virtualised;
+  - the list is paged with infinite scroll, not virtualised: every row
+    scrolled past stays in the page (about 63,000 DOM nodes after 4,100
+    rows), so scrolling through tens of thousands of messages gets slow.
+    Search or filter to narrow long folders;
   - thousands of labels are all drawn at once;
   - dates use two-digit years;
   - the "Conversations" toggle groups only the pages already loaded;

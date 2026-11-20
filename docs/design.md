@@ -22,7 +22,10 @@ folder reader) and adds the formats they lack. Nothing is ever written next to t
 - Metadata preserved and shown: folder path, Gmail labels, Outlook categories, Thunderbird tags,
   flags (unread, starred/flagged, answered, forwarded, draft, deleted, junk, has attachment), importance,
   and every format-specific property that is not folded into the above (shown in a "Properties" panel).
-- UI: folder tree + labels/tags/categories sections with counts, virtualised message list, sort,
+- UI: folder tree + labels/tags/categories sections with counts, paged infinite-scroll message list
+  (keyset pages of 100; amended from "virtualised": the DOM grows with the rows scrolled past, about
+  15 nodes per row, and is not recycled; measured acceptable on a 100k-message archive, see
+  docs/validation.md, and listed under Limitations in the README), sort,
   conversation threading, message view (sanitised HTML in sandboxed iframe / plain text / headers / raw),
   attachments download, inline `cid:` images, `.eml` export, filters, keyboard shortcuts, dark mode, deep links.
 - Search: full-text (subject/people/body/attachment names), ranking, snippets, Gmail-style operators
