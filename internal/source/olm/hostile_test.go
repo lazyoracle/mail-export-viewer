@@ -1,9 +1,11 @@
 package olm
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"errors"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -200,5 +202,51 @@ func TestPlainTextWithBodyWordIsNotHTML(t *testing.T) {
 func TestKeyOnlyStripsAfterPrefix(t *testing.T) {
 	if key("copyright") != "copyright" || key("getaway") != "getaway" || key("opfmessagecopysubject") != "subject" || key("opfmessagegetisread") != "isread" {
 		t.Error("key")
+	}
+}
+
+// A zip bomb (a tiny archive holding a huge, compressible message
+// document) is read only up to the scan budget, so its memory and time
+// stay small (issue #17).
+func TestZipBombDocumentBounded(t *testing.T) {
+	doc := append([]byte("<?xml version=\"1.0\"?><emails><email><OPFMessageCopySubject>Bomb</OPFMessageCopySubject><OPFMessageCopyBody>"),
+		bytes.Repeat([]byte("A"), 60<<20)...)
+	doc = append(doc, "</OPFMessageCopyBody></email></emails>"...)
+	s := openT(t, E{Name: "Local/Messages/Inbox/message_1.xml", Data: msgXML("before")},
+		E{Name: "Local/Messages/Inbox/message_2.xml", Data: doc})
+	doc = nil
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	es, _ := scan(t, s)
+	runtime.ReadMemStats(&after)
+	if alloc := after.TotalAlloc - before.TotalAlloc; alloc > 64<<20 {
+		t.Errorf("scanning the bomb allocated %d MiB", alloc>>20)
+	}
+	if len(es) == 0 || es[0].Msg.Subject != "s" {
+		t.Errorf("the message before the bomb is missing: %v", es)
+	}
+}
+
+// One document is read only up to what is left of the scan budget.
+func TestScanBudgetCapsOneDocument(t *testing.T) {
+	defer func(a int64, b int64) { budgetFloor, budgetFactor = a, b }(budgetFloor, budgetFactor)
+	budgetFloor, budgetFactor = 5000, 0
+	s := openT(t, E{Name: "Local/Messages/Inbox/message_1.xml", Data: msgXML(strings.Repeat("a", 3000))},
+		E{Name: "Local/Messages/Inbox/message_2.xml", Data: msgXML(strings.Repeat("b", 100000))})
+	o := s.(*olm)
+	var e2 *zip.File
+	for _, f := range o.zr.File {
+		if strings.HasSuffix(f.Name, "message_2.xml") {
+			e2 = f
+		}
+	}
+	_, _, n, err := o.readXML(e2, 2000)
+	if n > 2001 || err == nil {
+		t.Errorf("read %d bytes with 2000 left (err %v)", n, err)
+	}
+	es, ws := scan(t, s)
+	if len(es) != 1 || len(ws) == 0 || !strings.Contains(ws[len(ws)-1].Error(), "budget") {
+		t.Errorf("entries %d, warnings %v", len(es), ws)
 	}
 }

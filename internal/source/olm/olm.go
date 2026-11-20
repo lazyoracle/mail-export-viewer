@@ -28,13 +28,15 @@ var (
 	// very large exports while bounding the central directory in memory.
 	maxEntries = 1_000_000
 	// maxXMLBytes is the most uncompressed bytes of one message document
-	// (and of one attachment) that is read.
-	maxXMLBytes int64 = source.MaxMessageBytes
+	// that is read. Attachments are separate entries and the API shows at
+	// most 8 MiB of body text, so real documents stay far below it; parsing
+	// one costs a few times its size in memory.
+	maxXMLBytes int64 = 64 << 20
 	// maxScanBytes caps the total uncompressed message XML one Scan reads.
 	maxScanBytes int64 = 2 << 30
 	// The Scan budget is budgetFactor times the archive size, at least
 	// budgetFloor and at most maxScanBytes (see scanBudget).
-	budgetFloor, budgetFactor int64 = 64 << 20, 20
+	budgetFloor, budgetFactor int64 = 16 << 20, 20
 	// maxMessageBytes is the most Attachment reads, and the most a
 	// synthesised Raw message may be. It equals source.MaxMessageBytes
 	// (a variable only so tests can lower it).
@@ -280,8 +282,12 @@ func (s *olm) folderName(segs []string, idx, end int) string {
 	return strings.Join(parts, "/")
 }
 
-// readXML reads and interprets the message document e.
-func (s *olm) readXML(e *zip.File) (p *parsed, ok bool, n int64, err error) {
+// errBudget: a document is larger than what is left of the scan budget.
+var errBudget = errors.New("decompression budget used up")
+
+// readXML reads and interprets the message document e, reading at most
+// limit bytes of it (errBudget beyond; ErrTooLarge beyond maxXMLBytes).
+func (s *olm) readXML(e *zip.File, limit int64) (p *parsed, ok bool, n int64, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			p, ok, err = nil, false, fmt.Errorf("olm: %s: internal error: %v", e.Name, r)
@@ -296,12 +302,20 @@ func (s *olm) readXML(e *zip.File) (p *parsed, ok bool, n int64, err error) {
 	}
 	defer rc.Close()
 	// The declared size is not trusted: only actual bytes count.
-	data, err := io.ReadAll(io.LimitReader(rc, maxXMLBytes+1))
+	limit = min(limit, maxXMLBytes)
+	// Sized once from the declared size (bounded by limit), so a big
+	// document is not copied over and over while it grows.
+	buf := bytes.NewBuffer(make([]byte, 0, min(int64(e.UncompressedSize64), limit)+1+bytes.MinRead))
+	_, err = buf.ReadFrom(io.LimitReader(rc, limit+1))
+	data := buf.Bytes()
 	if err != nil {
 		return nil, false, int64(len(data)), fmt.Errorf("olm: %s: %w", e.Name, err)
 	}
-	if int64(len(data)) > maxXMLBytes {
-		return nil, false, maxXMLBytes, fmt.Errorf("olm: %s: %w", e.Name, source.ErrTooLarge)
+	if int64(len(data)) > limit {
+		if limit == maxXMLBytes {
+			return nil, false, int64(len(data)), fmt.Errorf("olm: %s: %w", e.Name, source.ErrTooLarge)
+		}
+		return nil, false, int64(len(data)), fmt.Errorf("olm: %s: %w", e.Name, errBudget)
 	}
 	root, err := parseXML(bytes.NewReader(data))
 	if err != nil {
@@ -361,7 +375,7 @@ func (s *olm) lookup(loc source.Locator) (*parsed, error) {
 	if _, _, ok := s.classifyMail(splitName(e.Name), e); !ok {
 		return nil, fmt.Errorf("olm: %q is not a message: %w", loc.Name, source.ErrStale)
 	}
-	p, ok, _, err := s.readXML(e)
+	p, ok, _, err := s.readXML(e, maxXMLBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -472,6 +486,7 @@ const (
 	resEmit    scanResult = iota // an entry was built
 	resNotMail                   // the document holds no message
 	resBroken                    // unreadable or malformed (already warned)
+	resBudget                    // the scan budget ran out inside the document
 )
 
 func (s *olm) Scan(ctx context.Context, emit func(source.Entry) error, warn func(error)) error {
@@ -508,12 +523,19 @@ func (s *olm) Scan(ctx context.Context, emit func(source.Entry) error, warn func
 			continue
 		}
 		seen[e.Name] = true
-		if read >= budget {
+		var (
+			ent source.Entry
+			res = resBudget
+			n   int64
+		)
+		if read < budget {
+			ent, res, n = s.scanOne(e, folder, budget-read, warn)
+			read += n
+		}
+		if res == resBudget {
 			warn(fmt.Errorf("olm: %s: stopped reading messages: decompression budget of %d bytes used up", s.path, budget))
 			break
 		}
-		ent, res, n := s.scanOne(e, folder, warn)
-		read += n
 		switch res {
 		case resNotMail:
 			skipped["other"]++
@@ -541,9 +563,11 @@ func (s *olm) Scan(ctx context.Context, emit func(source.Entry) error, warn func
 
 // scanOne builds the entry of message document e and reports how many
 // actual bytes it read.
-func (s *olm) scanOne(e *zip.File, folder string, warn func(error)) (source.Entry, scanResult, int64) {
-	p, isMsg, n, err := s.readXML(e)
+func (s *olm) scanOne(e *zip.File, folder string, limit int64, warn func(error)) (source.Entry, scanResult, int64) {
+	p, isMsg, n, err := s.readXML(e, limit)
 	switch {
+	case errors.Is(err, errBudget):
+		return source.Entry{}, resBudget, n
 	case errors.Is(err, source.ErrTooLarge):
 		// Listed, from what we know, so that it shows up; Load refuses it.
 		sum := &mail.Summary{Envelope: mail.Envelope{Subject: "(message too large to read)", Date: e.Modified.UTC()}}

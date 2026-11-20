@@ -82,18 +82,21 @@
 // More than 1,000,000 zip entries: Open fails. Declared zip sizes are
 // never trusted: every read is bounded by what is actually inflated (and
 // archive/zip itself refuses to inflate past a declared size). A message
-// document over maxXMLBytes (= MaxMessageBytes) is listed by Scan as
+// document over maxXMLBytes (64 MiB: attachments are separate entries, the
+// API shows at most 8 MiB of body text, and parsing costs a few times the
+// document size in memory) is listed by Scan as
 // "(message too large to read)" and Load, Raw and Attachment return
 // ErrTooLarge; an attachment over MaxMessageBytes likewise. Raw bounds the
 // whole synthesised message (text, HTML and all attachments after base64
 // expansion) by MaxMessageBytes using running totals of bytes read. Scan
 // has a decompression budget over all message XML it reads, charging
 // actual bytes on every path (too large, read errors): 20 times the
-// archive size, at least 64 MiB, at most 2 GiB; when used up Scan warns and
-// stops. Zip entries repeating an earlier name are skipped with one
+// archive size, at least 16 MiB, at most 2 GiB. One document is read only
+// up to what is left of it (a zip bomb stops there, before parsing); when
+// used up Scan warns and stops. Zip entries repeating an earlier name are skipped with one
 // warning (a Locator addresses the first entry of its name). XML documents
 // are limited to 200,000 elements, 1,000,000 tokens (comments and
-// processing instructions count), depth 64 and 64 MiB of text per element;
+// processing instructions count), depth 64 and 16 MiB of text per element;
 // invalid control characters are blanked, non-UTF-8 encodings converted;
 // UTF-16 is supported only with a BOM. A broken document is a warning, the
 // scan goes on; panics are recovered per item.

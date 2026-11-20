@@ -19,7 +19,7 @@ const (
 	// processing instructions), so floods of tiny tokens cannot burn CPU.
 	maxTokens = 1_000_000
 	// maxTextBytes caps the text kept per element; the rest is dropped.
-	maxTextBytes = 64 << 20
+	maxTextBytes = 16 << 20
 )
 
 type attr struct{ name, orig, val string }
