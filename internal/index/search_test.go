@@ -639,3 +639,44 @@ func TestCursorStaysSmall(t *testing.T) {
 		}
 	}
 }
+
+func queryPlan(t *testing.T, s *Store, q string, args ...any) string {
+	t.Helper()
+	rows, err := s.rdb.Query(`EXPLAIN QUERY PLAN `+q, args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var plan strings.Builder
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		rows.Scan(&id, &parent, &unused, &detail)
+		plan.WriteString(detail + "\n")
+	}
+	return plan.String()
+}
+
+// Flag filters and negations find a page by walking the date index (the
+// flags are in it, negations test the rowid) and count from a covering
+// index, instead of scanning and sorting the table (issue #18).
+func TestFilterPlansAvoidTableScan(t *testing.T) {
+	s, _ := searchFixture(t)
+	for _, qs := range []string{"is:starred", "has:attachment", "-is:unread", "-quarterly", "-label:work", "is:unread -is:starred"} {
+		c := compileQuery(ParseQuery(qs), false)
+		if c.scan {
+			t.Errorf("%q: compiled as a table scan", qs)
+		}
+		w, args := c.where(true, []string{`m.date_unix IS NOT NULL`})
+		plan := queryPlan(t, s, `SELECT m.id FROM messages m`+w+` ORDER BY m.date_unix DESC, m.id DESC LIMIT 51`, args...)
+		if !strings.Contains(plan, "INDEX messages_date") && !strings.Contains(plan, "INDEX messages_date_flags") {
+			t.Errorf("%q: page does not walk the date index:\n%s", qs, plan)
+		}
+		if strings.HasPrefix(qs, "is:") || strings.HasPrefix(qs, "has:") {
+			w, args = c.whereMode(true, true, nil)
+			if plan := queryPlan(t, s, `SELECT count(*) FROM messages m`+w, args...); !strings.Contains(plan, "COVERING INDEX") {
+				t.Errorf("%q: count scans the table:\n%s", qs, plan)
+			}
+		}
+	}
+}

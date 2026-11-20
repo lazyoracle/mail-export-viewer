@@ -18,7 +18,7 @@ import (
 
 // schemaVersion is stored in PRAGMA user_version. A database with another
 // non-zero version is a stale cache and is rebuilt from scratch.
-const schemaVersion = 2
+const schemaVersion = 3
 
 // ErrNotRegular is returned by Open when the database or lock path is a
 // symlink or otherwise not a regular file.
@@ -86,6 +86,9 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS messages_folder_date ON messages(folder_id, date_unix);
 CREATE INDEX IF NOT EXISTS messages_date ON messages(date_unix);
+-- Flag filters (is:, has:attachment, the hidden-deleted filter) walk this
+-- one in date order testing the flags in the index, and count from it.
+CREATE INDEX IF NOT EXISTS messages_date_flags ON messages(date_unix, flags);
 CREATE INDEX IF NOT EXISTS messages_source ON messages(source_id);
 CREATE INDEX IF NOT EXISTS messages_message_id ON messages(message_id);
 CREATE INDEX IF NOT EXISTS messages_thread ON messages(thread_id);

@@ -128,6 +128,8 @@ type compiled struct {
 	hideDeleted bool
 	// onlyDeleted: onlyDeletedCond is among conds.
 	onlyDeleted bool
+	// flagFilter: the query tests flags (is:, has:attachment).
+	flagFilter bool
 }
 
 func (c *compiled) add(cond string, args ...any) {
@@ -297,7 +299,9 @@ func compileQuery(q Query, includeDeleted bool) compiled {
 		if c.match != "" {
 			c.match = "(" + c.match + ") NOT (" + strings.Join(neg, " OR ") + ")"
 		} else {
-			c.addScan(`m.id NOT IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?)`,
+			// Tested on the rowid, which every index holds: walking the
+			// date index stays cheap, so this is no scan condition.
+			c.add(`m.id NOT IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?)`,
 				strings.Join(neg, " OR "))
 		}
 	}
@@ -328,7 +332,7 @@ func compileQuery(q Query, includeDeleted bool) compiled {
 		}
 		for _, v := range l.neg {
 			cond, arg := termCond(l.kinds, v)
-			c.addScan("NOT "+cond, arg)
+			c.add("NOT "+cond, arg) // on the rowid, like the negated match
 		}
 	}
 	for _, v := range q.Filename {
@@ -337,11 +341,16 @@ func compileQuery(q Query, includeDeleted bool) compiled {
 	for _, v := range q.NotFilename {
 		c.addScan(`m.att_names NOT LIKE ? ESCAPE '\'`, "%"+likeEscape(v)+"%")
 	}
+	// The date index holds the flags, so flag tests need no table scan:
+	// the walk in date order tests them in the index, and counts use it
+	// as a covering index.
 	if q.Is != 0 {
-		c.addScan(`m.flags & ? = ?`, int64(q.Is), int64(q.Is))
+		c.add(`m.flags & ? = ?`, int64(q.Is), int64(q.Is))
+		c.flagFilter = true
 	}
 	if q.NotIs != 0 {
-		c.addScan(`m.flags & ? = 0`, int64(q.NotIs))
+		c.add(`m.flags & ? = 0`, int64(q.NotIs))
+		c.flagFilter = true
 	}
 	if q.Before != nil {
 		c.add(`m.date_unix < ?`, q.Before.Unix())
@@ -537,8 +546,14 @@ func (s *Store) pageByDate(c compiled, sort string, limit int, cur *cursor) ([]R
 		dir, cmp = "ASC", ">"
 	}
 	date := `m.date_unix`
-	if c.scan && c.match == "" {
+	from := ` FROM messages m`
+	switch {
+	case c.scan && c.match == "":
 		date = `+m.date_unix` // keep the planner off the date index
+	case c.flagFilter && c.match == "":
+		// Without statistics the planner prefers messages_date and looks
+		// up every row to test its flags; this index has them.
+		from = ` FROM messages m INDEXED BY messages_date_flags`
 	}
 	want := limit + 1
 	var items []Row
@@ -567,7 +582,7 @@ func (s *Store) pageByDate(c compiled, sort string, limit int, cur *cursor) ([]R
 			}
 		}
 		w, wargs := c.where(true, extra, args...)
-		got, _, err := s.queryRows(`SELECT `+rowCols+` FROM messages m`+w+order+` LIMIT ?`,
+		got, _, err := s.queryRows(`SELECT `+rowCols+from+w+order+` LIMIT ?`,
 			append(wargs, want-len(items)), nil)
 		if err != nil {
 			return nil, "", err
