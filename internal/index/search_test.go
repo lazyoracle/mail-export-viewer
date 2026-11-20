@@ -614,3 +614,28 @@ func TestHighlightMarkersInTextAreStripped(t *testing.T) {
 		}
 	}
 }
+
+func TestCursorStaysSmall(t *testing.T) {
+	s := openStore(t)
+	var es []source.Entry
+	for i := range 3 {
+		raw := fmt.Sprintf("From: %s <x@example.com>\nSubject: %d%s\n\nbody\n",
+			strings.Repeat("N", 20000), i, strings.Repeat("s", 20000))
+		es = append(es, source.Entry{Folder: "A", Raw: []byte(raw), Loc: source.Locator{Offset: int64(i), Length: 1}})
+	}
+	index(t, s, newFake(t, source.Mbox, "a", es...))
+	for _, so := range []string{"subject", "from"} {
+		r := search(t, s, SearchParams{Sort: so, Limit: 1})
+		if len(r.NextCursor) == 0 || len(r.NextCursor) > 2048 {
+			t.Errorf("%s: cursor length %d", so, len(r.NextCursor))
+		}
+		seen := 1
+		for c := r.NextCursor; c != ""; seen++ {
+			p := search(t, s, SearchParams{Sort: so, Limit: 1, Cursor: c})
+			c = p.NextCursor
+		}
+		if seen != 3 {
+			t.Errorf("%s: paged %d items", so, seen)
+		}
+	}
+}

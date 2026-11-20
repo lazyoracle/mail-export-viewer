@@ -21,8 +21,10 @@ const (
 	// maxNameBytes the length of each.
 	maxNames     = 256
 	maxNameBytes = 512
-	// maxFieldBytes bounds header-derived text columns.
-	maxFieldBytes = 8 << 10
+	// maxFieldBytes bounds header-derived text columns; maxSortKeyBytes
+	// the sort keys (subject, sender), which travel in paging cursors.
+	maxFieldBytes   = 8 << 10
+	maxSortKeyBytes = 1 << 10
 	// maxRefs bounds the References kept for threading.
 	maxRefs = 100
 )
@@ -111,8 +113,8 @@ func buildRow(e *source.Entry, srcName string) row {
 		refs = refs[len(refs)-maxRefs:]
 	}
 	r.refs = clean(strings.Join(refs, " "), maxRefs*maxNameBytes)
-	r.subject = clean(m.Subject, maxFieldBytes)
-	r.fromName, r.fromEmail = clean(m.From.Name, maxFieldBytes), clean(m.From.Email, maxFieldBytes)
+	r.subject = clean(m.Subject, maxSortKeyBytes)
+	r.fromName, r.fromEmail = clean(m.From.Name, maxSortKeyBytes), clean(m.From.Email, maxSortKeyBytes)
 	r.toText = clean(mail.FormatAddresses(m.To), maxFieldBytes)
 	r.ccText = clean(mail.FormatAddresses(m.Cc), maxFieldBytes)
 	if !m.Date.IsZero() {
