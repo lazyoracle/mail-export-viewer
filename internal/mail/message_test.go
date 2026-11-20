@@ -117,8 +117,8 @@ func TestMissingHeaders(t *testing.T) {
 func TestDateFallback(t *testing.T) {
 	for in, want := range map[string]time.Time{
 		"Date: Tue, 2 Jan 2024 15:04:05 +0000\n\nx": time.Date(2024, 1, 2, 15, 4, 5, 0, time.UTC),
-		"Date: garbage\n\nx":                         envDate,
-		"Subject: none\n\nx":                         envDate,
+		"Date: garbage\n\nx":                        envDate,
+		"Subject: none\n\nx":                        envDate,
 	} {
 		if got := Parse([]byte(in), envDate).Date; !got.Equal(want) {
 			t.Errorf("%q: Date = %v, want %v", in, got, want)
