@@ -59,7 +59,7 @@ func (s *stubSidecar) Lookup(id string, off int64, key string) (source.SidecarMe
 	m, ok := s.byID[id]
 	return m, ok
 }
-func (s *stubSidecar) Inputs() []string                      { return s.inputs }
+func (s *stubSidecar) Inputs() []string                    { return s.inputs }
 func (s *stubSidecar) TagInfo() map[string]source.TagStyle { return s.tags }
 
 const (
