@@ -88,6 +88,14 @@
 // is:deleted shows them, the "deleted" flag count always counts them and
 // Thread(id) of a deleted id includes it.
 //
+// Per request, SearchParams.Deleted (Hide, Include, Only; Default follows
+// Options) and ThreadParams.Deleted override that, and FacetsFor counts
+// with or without them. The mode is a condition outside the query text,
+// so no query (an open quote, the 4 KiB or 64-item caps) can widen
+// DeletedOnly. Only and Include count a thread whole. ThreadPage caps a
+// thread at a row limit (reporting the full count), always keeping the
+// requested message.
+//
 // # Search
 //
 // See Query for the syntax. Decisions beyond earlier-tool:

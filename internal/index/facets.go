@@ -119,15 +119,19 @@ const setFacetsDirtySQL = `INSERT INTO meta(key, value) VALUES('facets_dirty', 1
 	ON CONFLICT(key) DO UPDATE SET value = 1`
 
 // Facets returns the folder tree and the label, category, tag and flag
-// counts.
-func (s *Store) Facets() (Facets, error) {
+// counts, counting Deleted messages as Options.IncludeDeleted says.
+func (s *Store) Facets() (Facets, error) { return s.FacetsFor(s.opts.IncludeDeleted) }
+
+// FacetsFor is Facets with Deleted messages counted when includeDeleted
+// (a per-request choice; see SearchParams.Deleted).
+func (s *Store) FacetsFor(includeDeleted bool) (Facets, error) {
 	f := Facets{Labels: []TermCount{}, Categories: []TermCount{}, Tags: []TermCount{}}
 	var err error
-	if f.Folders, err = s.folderTree(); err != nil {
+	if f.Folders, err = s.folderTree(includeDeleted); err != nil {
 		return f, err
 	}
 	countCol, unreadCol := "count", "unread"
-	if s.opts.IncludeDeleted {
+	if includeDeleted {
 		countCol, unreadCol = "count_all", "unread_all"
 	}
 	colors, err := s.tagColors()
@@ -182,7 +186,7 @@ func (s *Store) Facets() (Facets, error) {
 	for bit := range numFlags {
 		fl := source.Flags(1) << bit
 		c := counts[int64(fl)][0]
-		if s.opts.IncludeDeleted || fl == source.Deleted {
+		if includeDeleted || fl == source.Deleted {
 			c = counts[int64(fl)][1]
 		}
 		f.Flags = append(f.Flags, FlagCount{Flag: fl, Name: fl.Names()[0], Count: c})
@@ -198,7 +202,7 @@ func compareNames(a, b string) int {
 }
 
 // folderTree builds the merged folder tree from the folders table.
-func (s *Store) folderTree() ([]FolderNode, error) {
+func (s *Store) folderTree(includeDeleted bool) ([]FolderNode, error) {
 	rows, err := s.rdb.Query(`SELECT f.id, f.source_id, s.kind, s.path, f.path, f.total, f.unread, f.deleted,
 		f.deleted_unread FROM folders f JOIN sources s ON s.id = f.source_id ORDER BY s.path, f.id`)
 	if err != nil {
@@ -218,7 +222,7 @@ func (s *Store) folderTree() ([]FolderNode, error) {
 			&del, &delUnread); err != nil {
 			return nil, err
 		}
-		if !s.opts.IncludeDeleted {
+		if !includeDeleted {
 			ref.Count -= del
 			ref.Unread -= delUnread
 		}

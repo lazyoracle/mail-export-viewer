@@ -2,7 +2,9 @@ package index
 
 import (
 	"regexp"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -308,33 +310,68 @@ func (s *Store) writeThreadIDs(ups []threadUpdate) error {
 // Thread returns the messages in the thread of message id, oldest first
 // (unknown dates last, ties by id); Deleted messages other than id itself
 // are left out unless Options.IncludeDeleted. A message threading has not
-// reached yet is its own thread. Unknown ids give ErrNotFound.
+// reached yet is its own thread. Unknown ids give ErrNotFound. It is
+// ThreadPage without a limit.
 func (s *Store) Thread(id int64) ([]Row, error) {
-	m, err := s.Message(id)
+	rows, _, err := s.ThreadPage(ThreadParams{ID: id})
+	return rows, err
+}
+
+// ThreadParams selects a thread for ThreadPage.
+type ThreadParams struct {
+	ID int64 // any message of the thread (always included)
+	// Deleted: DeletedHide (or a Default resolving to it) leaves out
+	// Deleted messages other than ID; DeletedInclude and DeletedOnly show
+	// them (a thread is shown whole).
+	Deleted DeletedMode
+	Limit   int // at most this many rows (0: no limit)
+}
+
+// ThreadPage is Thread with a deleted mode and a row limit; total is the
+// number of messages the thread shows. When it is over Limit, the first
+// Limit rows are returned; if message ID is not among them it replaces the
+// last one, so it is always present (and stays in order: it sorts after
+// the rest).
+func (s *Store) ThreadPage(p ThreadParams) (rows []Row, total int, err error) {
+	m, err := s.Message(p.ID)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if m.ThreadID == 0 {
-		return []Row{m.Row}, nil
+		return []Row{m.Row}, 1, nil
 	}
 	hide := ""
-	if !s.opts.IncludeDeleted {
-		hide = ` AND (` + deletedCond + ` OR m.id = ?)`
-	}
 	args := []any{m.ThreadID}
-	if hide != "" {
-		args = append(args, id)
+	if s.resolveDeleted(p.Deleted) == DeletedHide {
+		hide = ` AND (` + deletedCond + ` OR m.id = ?)`
+		args = append(args, p.ID)
 	}
-	out, _, err := s.queryRows(`SELECT `+rowCols+` FROM messages m WHERE m.thread_id = ?`+hide+`
-		ORDER BY m.date_unix IS NULL, m.date_unix, m.id`, args, nil)
-	return out, err
+	where := ` FROM messages m WHERE m.thread_id = ?` + hide
+	limit := ""
+	if p.Limit > 0 {
+		limit = ` LIMIT ` + strconv.Itoa(p.Limit)
+	}
+	out, _, err := s.queryRows(`SELECT `+rowCols+where+` ORDER BY m.date_unix IS NULL, m.date_unix, m.id`+limit, args, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	total = len(out)
+	if p.Limit > 0 && total == p.Limit {
+		if err := s.rdb.QueryRow(`SELECT count(*)`+where, args...).Scan(&total); err != nil {
+			return nil, 0, err
+		}
+		if total > p.Limit && !slices.ContainsFunc(out, func(r Row) bool { return r.ID == p.ID }) {
+			out[p.Limit-1] = m.Row
+		}
+	}
+	return out, total, nil
 }
 
 // threadCounts fills counts[messageID] = size of that message's thread
-// for the given items: its visible messages (Deleted ones hidden unless
-// Options.IncludeDeleted), plus the item itself when it is a hidden
-// Deleted message shown by is:deleted.
-func (s *Store) threadCounts(items []Row, counts map[int64]int) error {
+// for the given items: its visible messages (Deleted ones left out when
+// hide), plus the item itself when it is a hidden Deleted message shown by
+// is:deleted.
+func (s *Store) threadCounts(items []Row, counts map[int64]int, hide bool) error {
 	tids := map[int64]bool{}
 	for _, m := range items {
 		if m.ThreadID != 0 {
@@ -348,12 +385,12 @@ func (s *Store) threadCounts(items []Row, counts map[int64]int) error {
 	for t := range tids {
 		args = append(args, t)
 	}
-	hide := ""
-	if !s.opts.IncludeDeleted {
-		hide = " AND " + strings.ReplaceAll(deletedCond, "m.", "")
+	cond := ""
+	if hide {
+		cond = " AND " + strings.ReplaceAll(deletedCond, "m.", "")
 	}
 	rows, err := s.rdb.Query(`SELECT thread_id, COUNT(*) FROM messages WHERE thread_id IN (?`+
-		strings.Repeat(",?", len(args)-1)+`)`+hide+` GROUP BY thread_id`, args...)
+		strings.Repeat(",?", len(args)-1)+`)`+cond+` GROUP BY thread_id`, args...)
 	if err != nil {
 		return err
 	}
@@ -372,7 +409,7 @@ func (s *Store) threadCounts(items []Row, counts map[int64]int) error {
 	}
 	for _, m := range items {
 		n := size[m.ThreadID]
-		if hide != "" && m.Flags.Has(source.Deleted) {
+		if hide && m.Flags.Has(source.Deleted) {
 			n++ // a deleted row shown (is:deleted) counts itself
 		}
 		if n > 0 {

@@ -25,8 +25,12 @@ type SearchParams struct {
 	SourceID, FolderID int64
 	Folder             string
 	Sort               string // date_desc (default)|date_asc|from|subject|relevance
-	Limit              int    // default 50, at most 1000
-	Cursor             string // NextCursor of the previous page, "" for the first
+	// Deleted chooses how messages flagged Deleted are treated (default:
+	// as Options.IncludeDeleted says). It is applied outside the query
+	// text, so no query can widen DeletedOnly.
+	Deleted DeletedMode
+	Limit   int    // default 50, at most 1000
+	Cursor  string // NextCursor of the previous page, "" for the first
 }
 
 // SearchResult is one page of results.
@@ -45,6 +49,36 @@ type SearchResult struct {
 	Highlights   map[int64]string
 	ThreadCounts map[int64]int
 }
+
+// DeletedMode says which messages flagged Deleted a Search or ThreadPage
+// shows.
+type DeletedMode int
+
+const (
+	// DeletedDefault follows Options.IncludeDeleted (Include if set, else
+	// Hide).
+	DeletedDefault DeletedMode = iota
+	// DeletedHide leaves them out, unless the query has is:deleted.
+	DeletedHide
+	// DeletedInclude shows them like any other message.
+	DeletedInclude
+	// DeletedOnly shows nothing else.
+	DeletedOnly
+)
+
+// resolveDeleted turns DeletedDefault into Hide or Include.
+func (s *Store) resolveDeleted(m DeletedMode) DeletedMode {
+	if m == DeletedHide || m == DeletedInclude || m == DeletedOnly {
+		return m
+	}
+	if s.opts.IncludeDeleted {
+		return DeletedInclude
+	}
+	return DeletedHide
+}
+
+// onlyDeletedCond keeps only Deleted messages.
+var onlyDeletedCond = fmt.Sprintf(`m.flags & %d != 0`, source.Deleted)
 
 // ErrBadCursor is returned for a cursor that was not produced by Search with
 // the same sort order.
@@ -92,6 +126,8 @@ type compiled struct {
 	filtered bool
 	// hideDeleted: deletedCond is among conds.
 	hideDeleted bool
+	// onlyDeleted: onlyDeletedCond is among conds.
+	onlyDeleted bool
 }
 
 func (c *compiled) add(cond string, args ...any) {
@@ -388,13 +424,19 @@ func normalizeSort(s string) string {
 func (s *Store) Search(p SearchParams) (SearchResult, error) {
 	// Without Deleted messages in the index there is nothing to hide, and
 	// leaving the filter out keeps the cheap plans available.
+	mode := s.resolveDeleted(p.Deleted)
 	var anyDeleted bool
-	if !s.opts.IncludeDeleted {
+	if mode == DeletedHide {
 		if err := s.rdb.QueryRow(`SELECT EXISTS(SELECT 1 FROM folders WHERE deleted > 0)`).Scan(&anyDeleted); err != nil {
 			return SearchResult{}, fmt.Errorf("index: search: %w", err)
 		}
 	}
-	c := compileQuery(ParseQuery(p.Q), s.opts.IncludeDeleted || !anyDeleted)
+	c := compileQuery(ParseQuery(p.Q), mode != DeletedHide || !anyDeleted)
+	if mode == DeletedOnly {
+		// Not "filtered": an unfiltered count comes from folders.deleted.
+		c.conds = append(c.conds, onlyDeletedCond)
+		c.scan, c.onlyDeleted = true, true
+	}
 	var scope []string
 	var scopeArgs []any
 	if p.SourceID != 0 {
@@ -453,7 +495,7 @@ func (s *Store) Search(p SearchParams) (SearchResult, error) {
 	if err := s.highlight(c, res.Items, res.Highlights); err != nil {
 		return SearchResult{}, err
 	}
-	if err := s.threadCounts(res.Items, res.ThreadCounts); err != nil {
+	if err := s.threadCounts(res.Items, res.ThreadCounts, mode == DeletedHide); err != nil {
 		return SearchResult{}, err
 	}
 	return res, nil
@@ -618,7 +660,10 @@ func (s *Store) count(c compiled, p SearchParams) (int64, error) {
 	var err error
 	if !c.filtered {
 		col := "total"
-		if c.hideDeleted {
+		switch {
+		case c.onlyDeleted:
+			col = "deleted"
+		case c.hideDeleted:
 			col = "total - deleted"
 		}
 		var conds []string
