@@ -132,8 +132,10 @@ func (s *Store) IndexSources(ctx context.Context, srcs []source.Source, onProgre
 		if err := r.indexOne(w.src, w.i, w.fprint, w.fpErr); err != nil {
 			return err
 		}
-		// Keep label/tag counts roughly current during a long first run.
-		if time.Since(lastFacets) >= facetInterval {
+		// Keep label/tag counts roughly current during a long first run:
+		// after a large source, or when the last recount is old.
+		big := s.Status().Sources[w.i].Messages >= facetBigSource
+		if big || time.Since(lastFacets) >= facetInterval {
 			if err := s.rebuildFacetsIfDirty(); err != nil {
 				return err
 			}

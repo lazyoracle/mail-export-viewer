@@ -1,8 +1,10 @@
 package index
 
 import (
+	"context"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/lazyoracle/mail-export-viewer/internal/source"
 )
@@ -179,5 +181,29 @@ func TestTagColorsFollowSource(t *testing.T) {
 	s.rdb.QueryRow(`SELECT count(*) FROM tag_colors`).Scan(&n)
 	if n != 0 {
 		t.Errorf("tag_colors rows = %d", n)
+	}
+}
+
+func TestFacetsUpdatedAfterLargeSource(t *testing.T) {
+	old := facetBigSource
+	facetBigSource = 1
+	t.Cleanup(func() { facetBigSource = old })
+	s := openStore(t)
+	e := rawEntry("A", 1, "one")
+	e.Labels = []string{"Early"}
+	a := newFake(t, source.Mbox, "a", e)
+	b := newFake(t, source.Mbox, "b", rawEntry("B", 2, "two"))
+	b.block = make(chan struct{})
+	done := make(chan error)
+	go func() { done <- s.IndexSources(context.Background(), []source.Source{a, b}, nil) }()
+	for s.Status().Sources == nil || s.Status().Sources[1].State != StateIndexing {
+		time.Sleep(time.Millisecond)
+	}
+	if l := facets(t, s).Labels; len(l) != 1 || l[0].Name != "Early" {
+		t.Errorf("labels during the run = %+v", l)
+	}
+	close(b.block)
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }

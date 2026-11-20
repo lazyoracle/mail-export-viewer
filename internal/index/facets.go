@@ -59,8 +59,9 @@ func (s *Store) Sources() ([]SourceInfo, error) {
 // and the label, category, tag and flag sections. Counts exclude Deleted
 // messages unless Options.IncludeDeleted (the "deleted" flag count always
 // counts them). Folder counts are live; label/category/tag/flag counts are
-// recomputed when an indexing run (or each source of it, at most every
-// facetInterval) changed messages.
+// recomputed at the end of an indexing run that changed messages and,
+// during it, after large sources (see facetBigSource), so they can lag
+// behind a running index.
 type Facets struct {
 	Folders []FolderNode
 	// Labels (Gmail, from mbox/eml sources), Categories (Outlook, from
@@ -104,8 +105,12 @@ type FlagCount struct {
 // numFlags is the number of defined source.Flags bits.
 const numFlags = 9
 
-// facetInterval is the minimum time between facet recounts during a run.
+// During a run, facets are recounted after a source that wrote at least
+// facetBigSource messages, or after any source once facetInterval has
+// passed since the last recount (a variable so tests can lower it).
 const facetInterval = 10 * time.Second
+
+var facetBigSource int64 = 20000
 
 const setFacetsDirtySQL = `INSERT INTO meta(key, value) VALUES('facets_dirty', 1)
 	ON CONFLICT(key) DO UPDATE SET value = 1`
