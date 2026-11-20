@@ -27,6 +27,10 @@ var ErrNotRegular = errors.New("not a regular file (a symlink?); remove it")
 // process) holds the index.
 var ErrLocked = errors.New("index: in use by another instance")
 
+// ErrBusy is returned by IndexSources, Reset and Close while an
+// IndexSources call is running on the same Store.
+var ErrBusy = errors.New("index: indexing in progress")
+
 // ErrNotFound is returned when a message id does not exist.
 var ErrNotFound = errors.New("index: not found")
 
@@ -167,6 +171,9 @@ type Store struct {
 
 	mu     sync.Mutex // guards status
 	status Progress
+	// runMu is held by IndexSources, Reset and Close (TryLock: a second
+	// caller gets ErrBusy instead of waiting); Close keeps it.
+	runMu sync.Mutex
 }
 
 func dsn(path string, pragmas ...string) string {
@@ -302,9 +309,12 @@ func wipe(dbPath string) error {
 }
 
 // Reset forgets everything indexed (for a forced re-index), keeping the
-// database file and the lock. It must not run concurrently with
-// IndexSources.
+// database file and the lock. It returns ErrBusy while IndexSources runs.
 func (s *Store) Reset() error {
+	if !s.runMu.TryLock() {
+		return ErrBusy
+	}
+	defer s.runMu.Unlock()
 	for _, t := range allTables {
 		if _, err := s.wdb.Exec(`DROP TABLE IF EXISTS ` + t); err != nil {
 			return err
@@ -319,9 +329,14 @@ func (s *Store) Reset() error {
 	return nil
 }
 
-// Close closes the store and releases its lock. It must not be called
-// while IndexSources runs (cancel its context and wait for it first).
+// Close closes the store and releases its lock. While IndexSources runs
+// it returns ErrBusy and closes nothing: cancel the run's context, wait
+// for IndexSources to return, then Close.
 func (s *Store) Close() error {
+	if !s.runMu.TryLock() {
+		return ErrBusy
+	}
+	// runMu stays locked: the store is closed for good.
 	err := errors.Join(s.rdb.Close(), s.wdb.Close())
 	s.lock.release()
 	return err

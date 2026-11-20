@@ -15,7 +15,9 @@
 //	msg, _ := srcs[m.SourcePath].Load(m.Loc)        // the server keeps Sources by Path
 //
 // Reads (Search, Facets, Message, Thread, Sources, Status) are safe while
-// IndexSources runs; Reset and Close are not.
+// IndexSources runs. IndexSources is synchronous and one run at a time; a
+// second run, Reset and Close return ErrBusy meanwhile (cancel the run's
+// context and wait for IndexSources to return first).
 //
 // # Schema
 //

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -559,5 +560,54 @@ func TestPanickingSourceDoesNotCrash(t *testing.T) {
 	index(t, s, bad, meta, good)
 	if meta.scans.Load() != 2 || good.scans.Load() != 1 || bad.scans.Load() != 2 {
 		t.Errorf("scans bad=%d meta=%d good=%d", bad.scans.Load(), meta.scans.Load(), good.scans.Load())
+	}
+}
+
+func TestConcurrentRunsAreRejected(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "i.db")
+	s, err := Open(db, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := newFake(t, source.Mbox, "a", rawEntry("A", 1, "one"))
+	a.block = make(chan struct{})
+	done := make(chan error)
+	go func() { done <- s.IndexSources(context.Background(), []source.Source{a}, nil) }()
+	for s.Status().Sources == nil || s.Status().Sources[0].State != StateIndexing {
+		time.Sleep(time.Millisecond)
+	}
+	b := newFake(t, source.Mbox, "b", rawEntry("B", 2, "two"))
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := s.IndexSources(context.Background(), []source.Source{b}, nil); !errors.Is(err, ErrBusy) {
+				t.Errorf("concurrent IndexSources = %v, want ErrBusy", err)
+			}
+		}()
+	}
+	wg.Wait()
+	if err := s.Reset(); !errors.Is(err, ErrBusy) {
+		t.Errorf("Reset while indexing = %v", err)
+	}
+	if err := s.Close(); !errors.Is(err, ErrBusy) {
+		t.Errorf("Close while indexing = %v", err)
+	}
+	if _, err := s.Search(SearchParams{}); err != nil {
+		t.Errorf("Search after refused Close: %v", err)
+	}
+	close(a.block)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if b.scans.Load() != 0 {
+		t.Error("rejected run scanned")
+	}
+	if err := s.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -42,6 +42,10 @@ type sourceState struct {
 	kind, fprint string
 }
 
+// IndexSources is synchronous: it returns when the run is over (callers
+// that serve while indexing run it in a goroutine and wait for it to
+// return). Only one run at a time: a concurrent call returns ErrBusy.
+//
 // IndexSources brings the index in line with srcs (one per Source.Path;
 // later duplicates are ignored): sources whose inputs (Source.Inputs: the
 // set of paths and each one's size and mtime) match a completed earlier
@@ -62,6 +66,10 @@ type sourceState struct {
 // keeps the messages written so far and is redone on the next run. Only
 // database errors and cancellation are returned.
 func (s *Store) IndexSources(ctx context.Context, srcs []source.Source, onProgress func(Progress)) (err error) {
+	if !s.runMu.TryLock() {
+		return ErrBusy
+	}
+	defer s.runMu.Unlock()
 	if onProgress == nil {
 		onProgress = func(Progress) {}
 	}
