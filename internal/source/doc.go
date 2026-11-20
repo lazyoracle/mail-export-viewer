@@ -45,12 +45,19 @@
 //
 // A single file must match a registered format (else ErrUnknownFormat); a
 // ".msf" file stands for its mbox (the same path without ".msf"). A
-// directory walk follows symlinks, never enters a directory twice, reports
-// each real file once, skips hidden entries, Mork sidecars, special files
-// (never opened, so FIFOs cannot block) and unclaimed files, and stops at
-// Limits (default depth 32, 1,000,000 entries) with a warning.
-// Candidate.Rel is the raw '/'-separated path below the root (valid UTF-8):
-// "" for the root directory itself, the base name for a single file.
+// directory walk follows symlinks only when their target resolves under the
+// root (a link leaving the root is skipped with a warning; the root path
+// itself may be a symlink), never enters a directory twice (the first path
+// visited wins), reports each real file once, skips hidden entries, Mork
+// sidecars, special files (never opened, so FIFOs cannot block) and
+// unclaimed files, and stops at Limits (default depth 32, 1,000,000
+// entries) with a warning. Candidate.Rel is the raw '/'-separated path
+// below the root: "" for the root directory itself, the base name for a
+// single file. It is made valid UTF-8 by replacing each invalid byte with
+// U+FFFD (as encoding/json shows it), so two names differing only in
+// invalid bytes ("caf\xe9" and "caf\xe8") get the same Rel and their
+// folders merge in the tree; their Paths, and so their Sources, stay
+// distinct.
 //
 // # Implementing Source
 //
@@ -61,7 +68,14 @@
 // unreadable, ctx is done, or emit failed (return emit's error as is).
 // Scan is never called concurrently with itself, but Load, Raw and
 // Attachment must be safe for concurrent use with each other and with a
-// running Scan (the server reads while the index scans).
+// running Scan (the server reads while the index scans). There is no
+// progress hook: consumers measure progress in bytes from Entry.Loc
+// offsets for mbox (Offset+Length against the file size) and in entry
+// counts otherwise.
+//
+// Load, Raw and Attachment refuse messages larger than MaxMessageBytes
+// (256 MiB, raw or synthesised size) with an error wrapping ErrTooLarge,
+// checking the size before reading; Scan still lists them.
 //
 // Entry fields:
 //
@@ -73,8 +87,10 @@
 //     "backup/Inbox"); eml uses Rel, or the base name of Path when Rel is
 //     "". The index groups by Source as well, so equal Folders of
 //     different sources stay distinguishable.
-//   - Labels: Gmail labels (X-Gmail-Labels, via mail.ParseLabels) or Outlook
-//     categories. Tags: Thunderbird tag display names. No duplicates.
+//   - Labels: Gmail labels for mbox (X-Gmail-Labels, via mail.ParseLabels)
+//     or Outlook categories for olm/pst; the index and UI tell them apart
+//     by Source.Kind() (a "Labels" section for mbox, "Categories" for
+//     olm/pst). Tags: Thunderbird tag display names. No duplicates.
 //   - Flags: the zero value is read and unflagged. Map Gmail system labels
 //     (Unread, Starred, Important), X-Mozilla-Status bits, PST/OLM
 //     read/flag/importance properties. HasAttachment is set by Resolve.
@@ -86,6 +102,8 @@
 //     eml set Raw (the message, or a bounded prefix of a huge one: headers
 //     and the first MiBs of body suffice) and Date (the From_ line date)
 //     and leave Msg nil; the index calls Entry.Resolve in parallel workers.
+//     With a prefix, attachments starting after it are not seen, so
+//     HasAttachment and AttachmentNames are best-effort for huge messages.
 //
 // Locator per format: mbox {Offset, Length} of the message including its
 // From_ line; eml {Name} the file name inside Candidate.Path; olm {Name} the
@@ -104,12 +122,35 @@
 //
 // Inputs lists every file the source depends on (including sidecars such
 // as a Thunderbird .msf or prefs.js), so that the index cache, keyed by
-// path+size+mtime of each, notices changes.
+// path+size+mtime of each, notices changes. The index also compares the
+// set of input paths with the cached one, so an eml directory (PerDir) is
+// re-scanned when files are added or removed, not only when one changes.
 //
-// # Extension points left to later tasks
+// The server serves cid: images by FindCID-ing the reference in
+// Load(loc).Attachments and then calling Attachment(loc, a.Index), which
+// works the same for raw-backed and synthesising formats.
 //
-// The Mork (.msf) metadata provider hooks into the mbox source through a
-// seam owned by package mbox (Task 4), not through this package. Per-source
-// metadata beyond Entries (e.g. Thunderbird tag colours) will be added as an
-// optional interface here when needed, checked by type assertion.
+// # Optional interfaces
+//
+// FolderLister: sources with their own folder tree (PST, OLM) list every
+// folder, including empty ones, so they appear in the UI. The index calls
+// it after Scan and adds the folders to those seen in Entries.
+//
+// # Sidecars (Thunderbird .msf)
+//
+// The mbox and msf packages never import each other. The msf package calls
+// RegisterSidecarProvider from init with a function that, given an mbox
+// path, opens the sidecar "<mbox>.msf" (and finds prefs.js for tag names
+// and colours), returning nil when there is none or it is unusable (after
+// its own warning handling; a corrupt sidecar must not fail the mbox). The
+// mbox source calls SidecarFor(path) once per mbox file in Open or Scan,
+// then for every message calls Lookup(Message-ID, From_ line offset,
+// X-Mozilla-Status key) and, when ok, replaces its header-derived flags by
+// SidecarMeta.Flags (keeping HasAttachment) and appends Tags, Labels and
+// Props (dropping duplicates). It adds Sidecar.Inputs() to its own Inputs.
+// SidecarMeta.Tags are display names already. TagInfo maps tag keys (as
+// written in X-Mozilla-Keys and the .msf "keywords" cell) to display name
+// and colour, so the mbox source also names keywords found in headers of
+// messages without a sidecar row. Exposing colours to the index will be an
+// optional Source interface added when the index needs it.
 package source

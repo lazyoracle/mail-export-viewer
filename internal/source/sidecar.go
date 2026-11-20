@@ -9,7 +9,7 @@ type SidecarMeta struct {
 	// recent truth: Thunderbird updates it, not the mbox), except
 	// HasAttachment, which Resolve derives from the message.
 	Flags        Flags
-	Tags, Labels []string // appended to Entry.Tags/Labels (duplicates dropped)
+	Tags, Labels []string // display names, appended to Entry.Tags/Labels (duplicates dropped)
 	Props        []Prop   // appended to Entry.Props
 }
 
@@ -30,7 +30,8 @@ type Sidecar interface {
 	// Inputs are the files the sidecar read (added to the mbox source's
 	// Inputs, so the cache notices changes).
 	Inputs() []string
-	// TagInfo maps tag keys ("$label1", "work") to display style; may be nil.
+	// TagInfo maps tag keys ("$label1", "work", as in X-Mozilla-Keys) to
+	// display name and colour; may be nil.
 	TagInfo() map[string]TagStyle
 }
 
