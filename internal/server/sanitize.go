@@ -223,7 +223,7 @@ func safeColor(v string) bool {
 }
 
 // bodyTag carries the first <body>'s bgcolor, text and style attributes
-// (from earlier-tool) as a wrapping <div style>, which stays open until the
+// as a wrapping <div style>, which stays open until the
 // end of the output. The style goes through sanitizeCSS like any other.
 func (s *sanitizer) bodyTag(tok html.Token) {
 	if s.bodySeen {

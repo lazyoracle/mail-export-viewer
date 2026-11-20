@@ -13,7 +13,7 @@ import (
 	"github.com/lazyoracle/mail-export-viewer/internal/source"
 )
 
-// Statistics (from earlier-tool): counts by year and month, top senders,
+// Statistics: counts by year and month, top senders,
 // plus per folder and per source counts. They need one pass over every
 // listed message, so they are cached until the index changes (and, while
 // indexing runs, recomputed at most every statsRefresh).

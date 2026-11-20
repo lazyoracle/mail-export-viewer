@@ -341,8 +341,8 @@ func TestSanitizeCSSBansSrcFunction(t *testing.T) {
 	}
 }
 
-// The <body> element is dropped, but its colours and style (from
-// earlier-tool) are carried by a wrapping <div>, sanitised like any style.
+// The <body> element is dropped, but its colours and style
+// are carried by a wrapping <div>, sanitised like any style.
 func TestSanitizeHTMLBodyStyleKept(t *testing.T) {
 	cases := []struct {
 		name, in string

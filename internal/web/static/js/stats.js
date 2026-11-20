@@ -1,4 +1,4 @@
-// Statistics view (from earlier-tool): totals, messages per year, a month
+// Statistics view: totals, messages per year, a month
 // heatmap, top senders, largest folders and sources. Every bar and cell
 // links to the matching search. All names are text.
 

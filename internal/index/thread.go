@@ -30,7 +30,7 @@ const setThreadsDirtySQL = `INSERT INTO meta(key, value) VALUES('threads_dirty',
 var (
 	subjectPrefix = regexp.MustCompile(`^(?:re|fwd?|aw|sv|antw|wg|tr)(?:\[\d+\])?\s*:\s*`)
 	// listTag is a mailing-list tag ("[dev] "), stripped like a prefix
-	// unless it is the whole subject (from earlier-tool).
+	// unless it is the whole subject.
 	listTag = regexp.MustCompile(`^\[[^\]]*\]\s*`)
 )
 

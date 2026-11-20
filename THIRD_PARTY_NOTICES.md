@@ -35,10 +35,6 @@ Otherwise the notices are reproduced verbatim.
 
 Other notes:
 
-- **Ported code.** Parts of `internal/mail`, `internal/index`,
-  `internal/server` and `internal/web` were ported from two earlier projects
-  by the same author, earlier-tool and earlier-tool. They are contributed here
-  under this project's MIT licence.
 - **PST reader.** `internal/source/pst` was written from Microsoft's
   published [MS-PST] specification. No other PST implementation's code was
   used. The public sample PST files used to check it were fetched locally

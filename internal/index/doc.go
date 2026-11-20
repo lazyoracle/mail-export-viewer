@@ -98,7 +98,7 @@
 //
 // # Search
 //
-// See Query for the syntax. Decisions beyond earlier-tool:
+// See Query for the syntax. Decisions:
 //
 //   - folder: (alias mailbox:) matches a folder path or its last
 //     segment(s) ("inbox" matches "Inbox" and "backup/Inbox"), not
@@ -109,8 +109,8 @@
 //     tag: only tags; whole names, ASCII case-insensitive (SQLite NOCASE).
 //   - is: takes every source.ParseFlag name or alias plus read/seen;
 //     has:attachment is the HasAttachment flag.
-//   - cc: (from earlier-tool) narrows by the FTS to/cc column and checks the
-//     Cc column; before:/after: accept '/' separators (earlier-tool).
+//   - cc: narrows by the FTS to/cc column and checks the
+//     Cc column; before:/after: accept '/' separators.
 //   - -before:/-after: keep undated messages (before:/after: never match
 //     them). -cc:x is exactly the negation of cc:x.
 //   - The last plain term is a prefix (3+ runes, not CJK). CJK terms also
@@ -125,10 +125,9 @@
 //
 // # Threading
 //
-// As in earlier-tool: union-find over Message-ID/In-Reply-To/References
+// Union-find over Message-ID/In-Reply-To/References
 // with phantom nodes and hub guards, plus same-normalised-subject chains
-// within 30 days (at most 25 long, no generic or short subjects). From
-// earlier-tool: mailing-list tags ("[dev] ") are stripped with reply
+// within 30 days (at most 25 long, no generic or short subjects). Mailing-list tags ("[dev] ") are stripped with reply
 // prefixes in any interleaving. Threads span sources. The thread id is
 // the smallest message id of the component. Threading reruns whenever a
 // threads_dirty marker (set with every message change, cleared only after

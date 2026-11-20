@@ -32,9 +32,9 @@
 // per message, header field values 1 MiB, a nameless message/rfc822 part is
 // scanned 8 KiB deep for its Subject, Summary.Text 256 KiB.
 //
-// # Decisions (from merging earlier-tool/mimeparse and earlier-tool/message)
+// # Decisions
 //
-// earlier-tool's parser is the base. From earlier-tool: the header field cap
+// Further behaviour: the header field cap
 // (linear-time folding), host-independent obsolete zone names and
 // "GMT+0530" dates, weekday-less "Mar 5 10:00:00 2024" dates,
 // NameGenerated, signature parts not counting as attachments, rejecting
@@ -43,7 +43,7 @@
 //   - Charsets: unknown or uninformative labels fall back to "UTF-8 if
 //     valid, else windows-1252". Text declared UTF-8 that has no valid
 //     multi-byte sequence is read as windows-1252 (mislabelled Latin-1)
-//     rather than replaced with U+FFFD as earlier-tool did; UTF-8 declared as
+//     rather than replaced with U+FFFD as before; UTF-8 declared as
 //     Latin-1 is kept as UTF-8. Raw 8-bit header bytes use the message's
 //     declared body charset first.
 //   - Attachment.Inline follows the disposition (inline, or none with a

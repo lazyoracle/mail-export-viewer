@@ -4,8 +4,8 @@
 A read-only, fully offline viewer for exported mailboxes. One portable Go binary:
 `mail-export-viewer <file-or-dir>` starts a localhost-only web server with a friendly UI for
 browsing and searching years of mail exported from Thunderbird, Outlook (Windows/Mac) and Gmail.
-It merges and generalises two earlier tools (an earlier-tool with SQLite/FTS5 and a Thunderbird
-folder reader) and adds the formats they lack. Nothing is ever written next to the input or sent anywhere.
+It builds on two earlier prototypes (one with SQLite/FTS5 search, one reading Thunderbird folders)
+and adds the formats they lack. Nothing is ever written next to the input or sent anywhere.
 
 ## Goals
 - Formats (detected by content, never by extension alone):
@@ -63,12 +63,12 @@ duplicate implementations of the same thing (one MIME parser, one sanitiser, one
 ## Approaches considered
 1. **Per-format viewers behind a router.** Duplicates index/search/server/UI per format. Rejected (the exact
    duplication the user wants to avoid).
-2. **Convert everything to mbox/eml first, reuse earlier-tool as is.** Loses metadata (tags, categories, flags,
+2. **Convert everything to mbox/eml first, reuse an existing mbox-only tool as is.** Loses metadata (tags, categories, flags,
    properties) and needs temp-disk writes. Rejected.
 3. **One normalised model; each format is a small reader that streams `Entry` records into one index;
    one parser/sanitiser/server/UI.** **Chosen** (author's call; the user delegated design).
-   Within it, storage: SQLite+FTS5 cache with lazy body reads (chosen, from earlier-tool) over
-   in-memory-only index (from the Thunderbird reader; fine for small input, bad at multi-GB).
+   Within it, storage: SQLite+FTS5 cache with lazy body reads (chosen) over
+   in-memory-only index (fine for small input, bad at multi-GB).
 
 ## Architecture
 ```

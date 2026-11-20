@@ -364,7 +364,7 @@ func TestParseLabelsWholeHeaderEncoded(t *testing.T) {
 		if got := ParseLabels(c.header); !reflect.DeepEqual(got, c.want) {
 			t.Errorf("%q: Labels = %q, want %q", c.header, got, c.want)
 		}
-		// Parity with decode-then-split (the earlier-tool cache format).
+		// Parity with decode-then-split.
 		if old := splitLabels(DecodeHeader(c.header)); !reflect.DeepEqual(ParseLabels(c.header), old) {
 			t.Errorf("%q: new %q, old %q", c.header, ParseLabels(c.header), old)
 		}

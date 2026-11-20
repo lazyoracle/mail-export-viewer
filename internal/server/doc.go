@@ -17,7 +17,7 @@
 // was rebuilt, ids are never reused) are 404 "not_found", a changed file is
 // 410 "stale", a source no longer opened or a missing file 410 "gone".
 //
-// # Security model (from earlier-tool, see its README)
+// # Security model
 //
 //   - Listen refuses non-loopback addresses unless allowRemote, before and
 //     after binding (a "localhost" resolving elsewhere is refused too).
@@ -52,13 +52,13 @@
 //
 // # Sanitiser
 //
-// One allow-list sanitiser (earlier-tool's, tokenizer based) re-serialises
+// One allow-list sanitiser (tokenizer based) re-serialises
 // message HTML: allowed elements and attributes only, text and values
 // re-escaped, URLs classified (http(s)/mailto links open in a new tab with
 // noopener noreferrer; cid: rewritten; raster data: images kept; remote
 // images blocked into data-blocked-src and flagged), CSS decoded and
 // checked to a fixpoint (no @import, expression, remote url()), nesting
-// capped at 256. From earlier-tool: the <body>'s bgcolor, text and style are
+// capped at 256. The <body>'s bgcolor, text and style are
 // kept on a wrapping <div>. Small raster cid: images (declared and sniffed
 // PNG/JPEG/GIF/WebP, at most 1 MiB each, 4 MiB and 64 parts per message)
 // are inlined as data: URIs; others use per-message cid URLs carrying a
@@ -103,13 +103,13 @@
 //   - cid inlining re-reads the message once: Raw is parsed and used when
 //     its attachments equal Load's (raw-backed formats), otherwise each
 //     part comes from Source.Attachment.
-//   - Statistics (earlier-tool's: years, months, top senders; plus folders,
+//   - Statistics (years, months, top senders; plus folders,
 //     sources, unread, attachments) take one pass over the listed messages
 //     and are cached until the index changes (at most every 30 s while
 //     indexing). Years and months are UTC. One mutex guards the cache: while
 //     one request computes, concurrent /api/stats requests wait for it
 //     (that wait is not cancellable; the computing request stops when its
 //     own client goes away, and the next caller starts over).
-//   - The raw .eml is named after the subject (earlier-tool), else
+//   - The raw .eml is named after the subject, else
 //     "message-<id>.eml".
 package server
