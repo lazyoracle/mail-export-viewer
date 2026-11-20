@@ -391,3 +391,32 @@ func TestThreadRecurringSubjectNotMerged(t *testing.T) {
 		t.Fatalf("recurring merged: %d threads", len(seen))
 	}
 }
+
+func TestInterruptedThreadingHeals(t *testing.T) {
+	a := source.Entry{Folder: "box", Loc: source.Locator{Offset: 0, Length: 1}, Raw: []byte(
+		"From: a@example.com\nSubject: Lunch plans\nDate: Mon, 2 Jan 2023 10:00:00 +0000\nMessage-ID: <a@x>\n\nhi\n")}
+	b := source.Entry{Folder: "box", Loc: source.Locator{Offset: 1, Length: 1}, Raw: []byte(
+		"From: b@example.com\nSubject: other words\nDate: Mon, 2 Jan 2023 11:00:00 +0000\nMessage-ID: <b@x>\n" +
+			"In-Reply-To: <a@x>\n\nyo\n")}
+	s := openStore(t)
+	f := newFake(t, source.Mbox, "box", a, b)
+	index(t, s, f)
+	// A crash part-way through writing thread ids: stale (non-NULL) values
+	// remain and the run never finished threading.
+	if _, err := s.wdb.Exec(`UPDATE messages SET thread_id = id`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.wdb.Exec(setThreadsDirtySQL); err != nil {
+		t.Fatal(err)
+	}
+	index(t, s, f) // nothing changed on disk
+	rows := allRows(t, s)
+	if rows[0].ThreadID != rows[1].ThreadID {
+		t.Fatal("stale thread ids not healed")
+	}
+	var dirty int
+	s.rdb.QueryRow(`SELECT count(*) FROM meta WHERE key = 'threads_dirty'`).Scan(&dirty)
+	if dirty != 0 {
+		t.Error("threads_dirty left set")
+	}
+}

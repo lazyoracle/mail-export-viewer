@@ -20,6 +20,9 @@ const (
 	maxSubjectChain = 25
 )
 
+const setThreadsDirtySQL = `INSERT INTO meta(key, value) VALUES('threads_dirty', 1)
+	ON CONFLICT(key) DO UPDATE SET value = 1`
+
 var (
 	subjectPrefix = regexp.MustCompile(`^(?:re|fwd?|aw|sv|antw|wg|tr)(?:\[\d+\])?\s*:\s*`)
 	// listTag is a mailing-list tag ("[dev] "), stripped like a prefix
@@ -115,7 +118,7 @@ func msgLinks(mid, irt, refs string) (own, parent string, chain []string) {
 //
 // The thread id is the smallest message row id in the component, so ids are
 // stable as threads grow. No per-message queries.
-func (s *Store) assignThreads() error {
+func (s *Store) assignThreads() (err error) {
 	const q = `SELECT id, message_id, in_reply_to, refs, subject, date_unix, COALESCE(thread_id, 0)
 		FROM messages ORDER BY id`
 	// Pass 1: fan-out counts.
@@ -252,6 +255,11 @@ func (s *Store) assignThreads() error {
 			changed = append(changed, threadUpdate{ids[i], t})
 		}
 	}
+	defer func() {
+		if err == nil {
+			_, err = s.wdb.Exec(`DELETE FROM meta WHERE key = 'threads_dirty'`)
+		}
+	}()
 	// Changed ids go into a temporary table with multi-row INSERTs, then
 	// one UPDATE ... FROM per batch (a statement per row is far slower).
 	for start := 0; start < len(changed); start += threadBatch {

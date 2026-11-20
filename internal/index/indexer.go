@@ -112,10 +112,8 @@ func (s *Store) IndexSources(ctx context.Context, srcs []source.Source, onProgre
 	r.set(func(p *Progress) { *p = prog })
 	r.publish()
 
-	removed := false
 	for path, st := range existing {
 		if !keep[path] {
-			removed = true
 			if err := s.removeSource(st.id); err != nil {
 				return err
 			}
@@ -142,12 +140,13 @@ func (s *Store) IndexSources(ctx context.Context, srcs []source.Source, onProgre
 			lastFacets = time.Now()
 		}
 	}
-	// Also heal rows left unthreaded by a cancelled or crashed earlier run.
-	need := len(work) > 0 || removed
-	if !need {
-		if err := s.wdb.QueryRow(`SELECT EXISTS(SELECT 1 FROM messages WHERE thread_id IS NULL)`).Scan(&need); err != nil {
-			return err
-		}
+	// Re-thread when messages changed since threading last completed (the
+	// marker is set with every message change and cleared only after a
+	// full assignThreads), which also heals a cancelled or crashed run.
+	var need bool
+	if err := s.wdb.QueryRow(`SELECT EXISTS(SELECT 1 FROM meta WHERE key = 'threads_dirty')
+		OR EXISTS(SELECT 1 FROM messages WHERE thread_id IS NULL)`).Scan(&need); err != nil {
+		return err
 	}
 	if need {
 		if err := ctx.Err(); err != nil {
@@ -263,6 +262,9 @@ func deleteSourceRows(tx *sql.Tx, id int64) error {
 		if _, err := tx.Exec(q, id); err != nil {
 			return err
 		}
+	}
+	if _, err := tx.Exec(setThreadsDirtySQL); err != nil {
+		return err
 	}
 	_, err := tx.Exec(setFacetsDirtySQL)
 	return err
@@ -715,8 +717,10 @@ func (w *writer) write(batch []row) (err error) {
 			return err
 		}
 	}
-	if _, err := tx.Exec(setFacetsDirtySQL); err != nil {
-		return err
+	for _, q := range []string{setFacetsDirtySQL, setThreadsDirtySQL} {
+		if _, err := tx.Exec(q); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return err
