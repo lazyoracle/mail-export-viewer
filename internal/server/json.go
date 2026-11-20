@@ -170,7 +170,7 @@ type folderRefJSON struct {
 
 type termJSON struct {
 	Name   string `json:"name"`
-	Color  string `json:"color,omitempty"`
+	Color  string `json:"color"`
 	Count  int64  `json:"count"`
 	Unread int64  `json:"unread"`
 }
