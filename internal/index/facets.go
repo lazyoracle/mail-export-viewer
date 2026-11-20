@@ -27,7 +27,10 @@ type SourceInfo struct {
 	Error string
 }
 
-// Sources returns every indexed source, sorted by path.
+// Sources returns every indexed source, sorted by path: the persisted
+// state as of the last write. For a running index, merge it with Status
+// (Progress.Sources, keyed by the same Path) for live state and progress;
+// a source not yet reached by a first run is in Status only.
 func (s *Store) Sources() ([]SourceInfo, error) {
 	rows, err := s.rdb.Query(`SELECT s.id, s.path, s.kind, s.fingerprint <> '', s.warn_count, s.warnings, s.error,
 		COALESCE(SUM(f.total), 0), COALESCE(SUM(f.unread), 0), COALESCE(SUM(f.deleted), 0), COALESCE(SUM(f.deleted_unread), 0)

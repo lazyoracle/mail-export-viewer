@@ -16,8 +16,12 @@ import (
 // (of the scope, if any) in Sort order.
 type SearchParams struct {
 	Q string
-	// Scope (all optional, ANDed): one source, one folder row, or a folder
-	// path of the merged tree (that exact path in every source).
+	// Scope (all optional, ANDed), for clicks in the folder tree:
+	// SourceID one source; FolderID one source's folder
+	// (FolderRef.ID); Folder one node of the merged tree (FolderNode.Path,
+	// matched exactly and case-sensitively, in every source; subfolders
+	// are not included). The folder: operator in Q is looser: a path or
+	// its last segment(s), case-insensitively.
 	SourceID, FolderID int64
 	Folder             string
 	Sort               string // date_desc (default)|date_asc|from|subject|relevance
