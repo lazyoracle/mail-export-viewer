@@ -246,37 +246,53 @@ func (s *Store) assignThreads() error {
 			rep[r] = ids[i]
 		}
 	}
-	type upd struct{ id, tid int64 }
-	var changed []upd
+	var changed []threadUpdate
 	for i, n := range msgNode {
 		if t := rep[u.find(n)]; t != old[i] {
-			changed = append(changed, upd{ids[i], t})
+			changed = append(changed, threadUpdate{ids[i], t})
 		}
 	}
+	// Changed ids go into a temporary table with multi-row INSERTs, then
+	// one UPDATE ... FROM per batch (a statement per row is far slower).
 	for start := 0; start < len(changed); start += threadBatch {
 		end := min(start+threadBatch, len(changed))
-		tx, err := s.wdb.Begin()
-		if err != nil {
-			return err
-		}
-		st, err := tx.Prepare(`UPDATE messages SET thread_id = ? WHERE id = ?`)
-		if err != nil {
-			tx.Rollback()
-			return err
-		}
-		for _, c := range changed[start:end] {
-			if _, err := st.Exec(c.tid, c.id); err != nil {
-				st.Close()
-				tx.Rollback()
-				return err
-			}
-		}
-		st.Close()
-		if err := tx.Commit(); err != nil {
+		if err := s.writeThreadIDs(changed[start:end]); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+type threadUpdate struct{ id, tid int64 }
+
+func (s *Store) writeThreadIDs(ups []threadUpdate) error {
+	tx, err := s.wdb.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`CREATE TEMP TABLE IF NOT EXISTS thread_updates(id INTEGER PRIMARY KEY, tid INTEGER NOT NULL)`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM temp.thread_updates`); err != nil {
+		return err
+	}
+	ins := multiInsert{tx: tx, head: `INSERT INTO temp.thread_updates(id, tid) VALUES`, cols: 2}
+	for _, u := range ups {
+		if err := ins.add(u.id, u.tid); err != nil {
+			return err
+		}
+	}
+	if err := ins.flush(); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE messages SET thread_id = u.tid FROM temp.thread_updates u WHERE messages.id = u.id`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM temp.thread_updates`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Thread returns the messages in the thread of message id, oldest first

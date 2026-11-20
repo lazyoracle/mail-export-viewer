@@ -361,7 +361,15 @@ func normalizeSort(s string) string {
 // Pagination is keyset-based (stable across equal keys) except for
 // relevance, which pages by offset.
 func (s *Store) Search(p SearchParams) (SearchResult, error) {
-	c := compileQuery(ParseQuery(p.Q), s.opts.IncludeDeleted)
+	// Without Deleted messages in the index there is nothing to hide, and
+	// leaving the filter out keeps the cheap plans available.
+	var anyDeleted bool
+	if !s.opts.IncludeDeleted {
+		if err := s.rdb.QueryRow(`SELECT EXISTS(SELECT 1 FROM folders WHERE deleted > 0)`).Scan(&anyDeleted); err != nil {
+			return SearchResult{}, fmt.Errorf("index: search: %w", err)
+		}
+	}
+	c := compileQuery(ParseQuery(p.Q), s.opts.IncludeDeleted || !anyDeleted)
 	var scope []string
 	var scopeArgs []any
 	if p.SourceID != 0 {
@@ -427,13 +435,18 @@ func (s *Store) Search(p SearchParams) (SearchResult, error) {
 }
 
 // where returns the WHERE clause (with leading " WHERE ") for c plus extra
-// conditions, and the args; the FTS match is added as an IN subquery when
-// withMatch is set.
+// conditions, and the args; the FTS match is added when withMatch is set.
 func (c compiled) where(withMatch bool, extra []string, extraArgs ...any) (string, []any) {
+	return c.whereMode(withMatch, false, extra, extraArgs...)
+}
+
+// whereMode is where; forCount never uses the common-match plan (which
+// only helps to find the first rows in sort order).
+func (c compiled) whereMode(withMatch, forCount bool, extra []string, extraArgs ...any) (string, []any) {
 	conds := append([]string(nil), c.conds...)
 	args := append([]any(nil), c.args...)
 	if withMatch && c.match != "" {
-		if c.common {
+		if c.common && !forCount {
 			// The unary + stops the planner driving the query from the
 			// match set (a row lookup per match, then a sort); it walks an
 			// index in sort order and tests membership instead.
@@ -599,8 +612,11 @@ func (s *Store) count(c compiled, p SearchParams) (int64, error) {
 			w = " WHERE " + strings.Join(conds, " AND ")
 		}
 		err = s.rdb.QueryRow(`SELECT COALESCE(SUM(`+col+`), 0) FROM folders`+w, args...).Scan(&n)
+	} else if len(c.conds) == 0 && c.match != "" {
+		// Every FTS row is a message.
+		err = s.rdb.QueryRow(`SELECT count(*) FROM messages_fts WHERE messages_fts MATCH ?`, c.match).Scan(&n)
 	} else {
-		w, args := c.where(true, nil)
+		w, args := c.whereMode(true, true, nil)
 		err = s.rdb.QueryRow(`SELECT count(*) FROM messages m`+w, args...).Scan(&n)
 	}
 	if err != nil {

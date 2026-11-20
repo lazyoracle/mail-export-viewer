@@ -21,8 +21,8 @@ import (
 const (
 	// batchSize is the number of messages written per transaction;
 	// batchBytes ends a batch early so large messages do not pile up.
-	batchSize  = 500
-	batchBytes = 32 << 20
+	batchSize  = 2000
+	batchBytes = 16 << 20
 	// budgetBytes bounds the raw message bytes (Entry.Raw) queued, being
 	// summarised or waiting to be written in order, in budgetUnit units;
 	// an entry takes at least one unit and a larger-than-budget entry all.
@@ -58,8 +58,10 @@ type sourceState struct {
 // Scan warnings are counted and the first maxStoredWarnings kept per
 // source (SourceInfo.Warnings). A Scan error marks the source failed
 // (SourceInfo.Error): its messages read so far stay listed and it is
-// retried on the next run. onProgress (may be nil) is called from this
-// goroutine; Status reports the same from any goroutine.
+// retried on the next run. onProgress (may be nil) is called with a copy
+// of the status after every written batch and state change; calls are
+// never concurrent and all happen before IndexSources returns. Status
+// reports the same from any goroutine.
 //
 // On cancellation IndexSources returns ctx.Err(); the source being indexed
 // keeps the messages written so far and is redone on the next run. Only
@@ -390,45 +392,49 @@ func (r *run) indexOne(src source.Source, i int, fprint string) error {
 	}
 	go func() { wg.Wait(); close(results) }()
 
-	// Writer (this goroutine): rows in scan order.
+	// Collector (this goroutine): rows in scan order, cut into batches for
+	// the writer goroutine, so summarising goes on while a batch is written.
 	labelKind := kindLabel
 	if isCategoryKind(src.Kind()) {
 		labelKind = kindCategory
 	}
 	w := writer{s: s, srcID: srcID, labelKind: labelKind, folders: map[string]int64{}}
+	var written, maxEnd int64
+	unit := "" // set by the collector before the first batch is sent
+	var werr error
+	batches := make(chan []row, 1)
+	wdone := make(chan struct{})
+	go func() {
+		defer close(wdone)
+		for b := range batches {
+			if werr != nil {
+				continue
+			}
+			if werr = w.write(b); werr != nil {
+				cancel()
+				continue
+			}
+			written += int64(len(b))
+			for _, x := range b {
+				maxEnd = max(maxEnd, x.end)
+			}
+			n, _ := warns.get()
+			r.set(func(p *Progress) {
+				sp := &p.Sources[i]
+				sp.Unit, sp.Messages, sp.Warnings = unit, written, n
+				if unit == UnitBytes {
+					sp.Total, sp.Done = total, min(maxEnd, total)
+				} else {
+					sp.Done = written
+				}
+			})
+			r.publish()
+		}
+	}()
 	pending := map[int]result{}
 	next := 0
-	var batch []row
-	var batchLen int
-	var written, maxEnd int64
-	unit := ""
-	var werr error
-	flush := func() {
-		if werr != nil || len(batch) == 0 {
-			batch, batchLen = batch[:0], 0
-			return
-		}
-		if werr = w.write(batch); werr != nil {
-			cancel()
-			return
-		}
-		written += int64(len(batch))
-		for _, b := range batch {
-			maxEnd = max(maxEnd, b.end)
-		}
-		batch, batchLen = batch[:0], 0
-		n, _ := warns.get()
-		r.set(func(p *Progress) {
-			sp := &p.Sources[i]
-			sp.Unit, sp.Messages, sp.Warnings = unit, written, n
-			if unit == UnitBytes {
-				sp.Total, sp.Done = total, min(maxEnd, total)
-			} else {
-				sp.Done = written
-			}
-		})
-		r.publish()
-	}
+	batch := make([]row, 0, batchSize)
+	batchLen := 0
 	for res := range results {
 		if ctx.Err() != nil {
 			continue // drain
@@ -453,19 +459,21 @@ func (r *run) indexOne(src source.Source, i int, fprint string) error {
 			batch = append(batch, p.r)
 			batchLen += p.r.size
 			if len(batch) >= batchSize || batchLen >= batchBytes {
-				flush()
+				batches <- batch
+				batch, batchLen = make([]row, 0, batchSize), 0
 			}
 		}
 	}
+	if ctx.Err() == nil && len(batch) > 0 {
+		batches <- batch
+	}
+	close(batches)
+	<-wdone
 	if werr != nil {
 		return werr
 	}
 	if err := r.ctx.Err(); err != nil {
 		return err
-	}
-	flush()
-	if werr != nil {
-		return werr
 	}
 	if unit == "" {
 		unit = UnitMessages
@@ -569,43 +577,29 @@ func (w *writer) write(batch []row) (err error) {
 			w.terms = nil // ids of rolled-back inserts are void
 		}
 	}()
-	ins, err := tx.Prepare(`INSERT INTO messages(source_id, folder_id, loc, message_id, in_reply_to, refs,
-		subject, from_name, from_email, to_text, cc_text, date_unix, flags, att_names, labels, tags, snippet,
-		parse_error) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-	if err != nil {
+	// Explicit ids (single writer) let every table be filled with
+	// multi-row INSERTs: the driver parses each statement on every Exec, so
+	// one statement per row would dominate the cost.
+	var nextID int64
+	if err := tx.QueryRow(`SELECT COALESCE(MAX(id), 0) + 1 FROM messages`).Scan(&nextID); err != nil {
 		return err
 	}
-	defer ins.Close()
-	fts, err := tx.Prepare(`INSERT INTO messages_fts(rowid, subject, from_text, to_text, body, att_names)
-		VALUES(?,?,?,?,?,?)`)
-	if err != nil {
-		return err
-	}
-	defer fts.Close()
-	link, err := tx.Prepare(`INSERT OR IGNORE INTO message_terms(term_id, message_id) VALUES(?, ?)`)
-	if err != nil {
-		return err
-	}
-	defer link.Close()
-	prop, err := tx.Prepare(`INSERT INTO props(message_id, data) VALUES(?, ?)`)
-	if err != nil {
-		return err
-	}
-	defer prop.Close()
+	msgs := multiInsert{tx: tx, head: `INSERT INTO messages(id, source_id, folder_id, loc, message_id, in_reply_to,
+		refs, subject, from_name, from_email, to_text, cc_text, date_unix, flags, att_names, labels, tags, snippet,
+		parse_error) VALUES`, cols: 19}
+	fts := multiInsert{tx: tx, head: `INSERT INTO messages_fts(rowid, subject, from_text, to_text, body, att_names) VALUES`, cols: 6}
+	links := multiInsert{tx: tx, head: `INSERT OR IGNORE INTO message_terms(term_id, message_id) VALUES`, cols: 2}
+	props := multiInsert{tx: tx, head: `INSERT INTO props(message_id, data) VALUES`, cols: 2}
 	deltas := map[int64]*folderDelta{}
-	for _, r := range batch {
+	for i, r := range batch {
+		id := nextID + int64(i)
 		fid := w.folders[r.folder]
-		res, err := ins.Exec(w.srcID, fid, r.loc, r.messageID, r.inReplyTo, r.refs, r.subject, r.fromName,
+		if err := msgs.add(id, w.srcID, fid, r.loc, r.messageID, r.inReplyTo, r.refs, r.subject, r.fromName,
 			r.fromEmail, r.toText, r.ccText, r.date, r.flags, r.attNames, strings.Join(r.labels, "\n"),
-			strings.Join(r.tags, "\n"), r.snippet, r.parseErr)
-		if err != nil {
+			strings.Join(r.tags, "\n"), r.snippet, r.parseErr); err != nil {
 			return fmt.Errorf("index: insert message: %w", err)
 		}
-		id, err := res.LastInsertId()
-		if err != nil {
-			return err
-		}
-		if _, err := fts.Exec(id, r.subject, r.ftsFrom, r.ftsTo, r.body, r.attNames); err != nil {
+		if err := fts.add(id, r.subject, r.ftsFrom, r.ftsTo, r.body, r.attNames); err != nil {
 			return fmt.Errorf("index: insert fts: %w", err)
 		}
 		for _, l := range [2]struct {
@@ -617,13 +611,13 @@ func (w *writer) write(batch []row) (err error) {
 				if err != nil {
 					return err
 				}
-				if _, err := link.Exec(tid, id); err != nil {
+				if err := links.add(tid, id); err != nil {
 					return err
 				}
 			}
 		}
 		if r.props != "" {
-			if _, err := prop.Exec(id, r.props); err != nil {
+			if err := props.add(id, r.props); err != nil {
 				return err
 			}
 		}
@@ -643,6 +637,11 @@ func (w *writer) write(batch []row) (err error) {
 			d.deletedUnread += unread
 		}
 	}
+	for _, m := range []*multiInsert{&msgs, &fts, &links, &props} {
+		if err := m.flush(); err != nil {
+			return err
+		}
+	}
 	for fid, d := range deltas {
 		if _, err := tx.Exec(`UPDATE folders SET total = total + ?, unread = unread + ?, deleted = deleted + ?,
 			deleted_unread = deleted_unread + ? WHERE id = ?`, d.total, d.unread, d.deleted, d.deletedUnread, fid); err != nil {
@@ -657,4 +656,36 @@ func (w *writer) write(batch []row) (err error) {
 	}
 	committed = true
 	return nil
+}
+
+// multiInsert batches rows into multi-row INSERT statements of at most
+// multiRows rows.
+type multiInsert struct {
+	tx   *sql.Tx
+	head string
+	cols int
+	args []any
+	n    int
+}
+
+const multiRows = 64
+
+func (m *multiInsert) add(vals ...any) error {
+	m.args = append(m.args, vals...)
+	m.n++
+	if m.n == multiRows {
+		return m.flush()
+	}
+	return nil
+}
+
+func (m *multiInsert) flush() error {
+	if m.n == 0 {
+		return nil
+	}
+	row := "(?" + strings.Repeat(",?", m.cols-1) + ")"
+	q := m.head + row + strings.Repeat(","+row, m.n-1)
+	_, err := m.tx.Exec(q, m.args...)
+	m.args, m.n = m.args[:0], 0
+	return err
 }
