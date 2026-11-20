@@ -46,6 +46,24 @@ type Source interface {
 // at the message it was scanned from (the file changed since indexing).
 var ErrStale = errors.New("source: stale locator")
 
+// MaxMessageBytes is the largest message (raw or synthesised size) Load, Raw
+// and Attachment handle; above it they return an error wrapping
+// ErrTooLarge without reading the message into memory. Scan still lists
+// such messages (from a bounded prefix).
+const MaxMessageBytes = 256 << 20
+
+// ErrTooLarge is wrapped when a message exceeds MaxMessageBytes.
+var ErrTooLarge = errors.New("source: message too large")
+
+// FolderLister is optionally implemented by sources with a folder tree of
+// their own (PST, OLM) so that folders without messages are shown too.
+// Folders returns every folder path, in the same form as Entry.Folder; the
+// index adds them to the folders it learned from Entries. It is called
+// after Scan.
+type FolderLister interface {
+	Folders() []string
+}
+
 // Entry is what Scan yields per message.
 type Entry struct {
 	// Folder is the folder path, '/'-separated, valid UTF-8, never empty
