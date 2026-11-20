@@ -41,6 +41,11 @@ func TestAppleMailFolderName(t *testing.T) {
 		"mbox":                "mbox",
 		"Name/mbox":           "Name/mbox",
 		".mbox/mbox":          ".mbox/mbox",
+		// Nested mailboxes are nested Name.mbox directories (issue #13).
+		"Projects.mbox/Launch.mbox/mbox": "Projects/Launch",
+		"Mail/A.mbox/B.mbox/C.mbox/mbox": "Mail/A/B/C",
+		"Mail.sbd/A.mbox/mbox":           "Mail/A",
+		"x.mbox/Notes/mbox":              "x.mbox/Notes/mbox",
 	} {
 		if got := folderName(rel, true); got != want {
 			t.Errorf("folderName(%q) = %q, want %q", rel, got, want)

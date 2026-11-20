@@ -292,13 +292,18 @@ func (s *mboxSource) Attachment(loc source.Locator, index int) (mail.Attachment,
 // folderName turns a Candidate.Rel (raw '/'-separated path below the
 // discovery root) into a folder path: Thunderbird's "X.sbd" directories
 // become "X", and with stripExt a ".mbox"/".mbx"/".mbs" extension of the last
-// element is dropped; Apple Mail's "Name.mbox/mbox" is "Name". A name that would become empty is kept as is.
+// element is dropped; Apple Mail's "Name.mbox/mbox" is "Name" (and its
+// nested "A.mbox/B.mbox/mbox" is "A/B"). A name that would become empty is
+// kept as is.
 func folderName(rel string, stripExt bool) string {
 	parts := strings.Split(rel, "/")
-	// Apple Mail: "Name.mbox/mbox" is the folder "Name".
+	// Apple Mail: "Name.mbox/mbox" is the folder "Name", and sub-mailboxes
+	// are nested "Name.mbox" directories ("A.mbox/B.mbox/mbox" is "A/B").
+	apple := false
 	if n := len(parts); stripExt && n >= 2 && strings.EqualFold(parts[n-1], "mbox") {
 		if base, ok := cutSuffixFold(parts[n-2], ".mbox"); ok && base != "" {
 			parts = parts[:n-1]
+			apple = true
 		}
 	}
 	out := parts[:0]
@@ -308,6 +313,8 @@ func folderName(rel string, stripExt bool) string {
 		}
 		last := i == len(parts)-1
 		if base, ok := cutSuffixFold(p, ".sbd"); ok && base != "" && (!last || !stripExt) {
+			p = base
+		} else if base, ok := cutSuffixFold(p, ".mbox"); ok && base != "" && apple && !last {
 			p = base
 		} else if last && stripExt {
 			for _, ext := range []string{".mbox", ".mbx", ".mbs"} {

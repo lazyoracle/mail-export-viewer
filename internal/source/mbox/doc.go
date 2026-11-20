@@ -62,8 +62,8 @@
 // Folder is derived from Candidate.Rel: Thunderbird "X.sbd" directories
 // become "X" ("Archive.sbd/2019" is "Archive/2019"), and a .mbox/.mbx/.mbs
 // extension of the file name is dropped; Apple Mail's "Name.mbox/mbox" is
-// "Name". Loose .eml files are the messages
-// of their directory's folder (Rel, or its base name when Rel is empty); a
+// "Name", and its nested sub-mailboxes "A.mbox/B.mbox/mbox" are "A/B".
+// Loose .eml files are the messages of their directory's folder (Rel, or its base name when Rel is empty); a
 // Locator names the file within the directory, and only files the Candidate
 // listed can be loaded. Their fallback date is the file's modification time.
 package mbox
