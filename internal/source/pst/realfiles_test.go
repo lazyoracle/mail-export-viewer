@@ -23,6 +23,80 @@ func samples(t *testing.T) []string {
 	return files
 }
 
+// TestRealMessages reads every folder, message and attachment and logs
+// aggregate counts only (no message content).
+func TestRealMessages(t *testing.T) {
+	for _, path := range samples(t) {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			b, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			st, err := openStore(openBytes(t, b))
+			if err != nil {
+				t.Fatal(err)
+			}
+			fs, warns := st.folders()
+			for _, w := range warns {
+				t.Errorf("folder warning: %v", w)
+			}
+			classes := map[string]int{}
+			var msgs, fails, withText, withHTML, withHeaders, withFrom, withDate, atts, attFails, labelled, msgIDs int
+			for _, f := range fs {
+				ids, err := st.contents(f.nid)
+				if err != nil {
+					t.Errorf("folder %d contents: %v", len(f.path), err)
+					continue
+				}
+				for _, id := range ids {
+					m, err := st.message(id, true)
+					if err != nil {
+						fails++
+						t.Logf("message %#x: %v", id, err)
+						continue
+					}
+					msgs++
+					classes[m.class]++
+					if m.Text != "" {
+						withText++
+					}
+					if m.HTML != "" {
+						withHTML++
+					}
+					if len(m.Header) > 0 {
+						withHeaders++
+					}
+					if m.From.Email != "" || m.From.Name != "" {
+						withFrom++
+					}
+					if !m.Date.IsZero() {
+						withDate++
+					}
+					if m.MessageID != "" {
+						msgIDs++
+					}
+					if len(m.labels) > 0 {
+						labelled++
+					}
+					for i := range m.Attachments {
+						atts++
+						if _, _, err := st.attachment(id, i); err != nil {
+							attFails++
+							t.Logf("attachment %#x/%d: %v", id, i, err)
+						}
+					}
+				}
+			}
+			t.Logf("%d folders, %d messages (%d failed), classes %v", len(fs), msgs, fails, classes)
+			t.Logf("text %d, html %d, headers %d, from %d, date %d, message-id %d, categorised %d, attachments %d (%d failed)",
+				withText, withHTML, withHeaders, withFrom, withDate, msgIDs, labelled, atts, attFails)
+			if fails > 0 || attFails > 0 {
+				t.Errorf("%d messages and %d attachments failed", fails, attFails)
+			}
+		})
+	}
+}
+
 func TestRealNDB(t *testing.T) {
 	for _, path := range samples(t) {
 		t.Run(filepath.Base(path), func(t *testing.T) {

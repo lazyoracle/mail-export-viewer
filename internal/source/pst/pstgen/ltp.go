@@ -203,14 +203,10 @@ func (h *heapBuilder) bth(cbKey, cbEnt int, recs [][]byte) uint32 {
 }
 
 // subAlloc stores large values in subnodes.
-type subAlloc struct {
-	next uint32
-	subs []Subnode
-}
+type subAlloc struct{ subs []Subnode }
 
 func (s *subAlloc) add(data []byte) uint32 {
-	s.next++
-	nid := s.next<<5 | 0x1F
+	nid := subNID()
 	s.subs = append(s.subs, Subnode{NID: nid, Blocks: Split(data)})
 	return nid
 }
@@ -231,7 +227,7 @@ func hnid(h *heapBuilder, s *subAlloc, v []byte) uint32 {
 // is computed from it.
 func PC(props []Prop, extra ...Subnode) Built {
 	h := &heapBuilder{sig: 0xBC}
-	s := &subAlloc{next: 0x100}
+	s := &subAlloc{}
 	props = append([]Prop(nil), props...)
 	sort.SliceStable(props, func(i, j int) bool { return props[i].ID < props[j].ID })
 	var recs [][]byte
@@ -278,7 +274,7 @@ type Row struct {
 // version columns are added).
 func TC(cols []Col, rows []Row) Built {
 	h := &heapBuilder{sig: 0x7C}
-	s := &subAlloc{next: 0x200}
+	s := &subAlloc{}
 	type colDesc struct {
 		Col
 		ib, cb int
@@ -351,8 +347,7 @@ func TC(cols []Col, rows []Row) Built {
 			j := min(i+per, len(rows))
 			blocks = append(blocks, matrix[i*rowSize:j*rowSize])
 		}
-		s.next++
-		rowsRef = s.next<<5 | 0x1F
+		rowsRef = subNID()
 		s.subs = append(s.subs, Subnode{NID: rowsRef, Blocks: blocks})
 	}
 	rowIndex := h.bth(4, 4, idx)
