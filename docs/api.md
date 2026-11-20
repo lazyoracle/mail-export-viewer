@@ -458,8 +458,8 @@ gives `404`. Use URLs exactly as they appear in `bodyHtml`.
 - `byFolder` holds the 20 largest folders.
 - The result is cached until the index changes. While indexing runs it is
   recomputed at most every 30 s, and `partial` is `true`.
-- The first call on a large archive can take several seconds. Concurrent
-  calls wait for the same computation.
+- The first call reads every listed message once (about 0.3 s per 100k
+  messages). Concurrent calls wait for the same computation.
 
 ## UI files
 

@@ -1,6 +1,8 @@
 package index
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"reflect"
@@ -678,5 +680,39 @@ func TestFilterPlansAvoidTableScan(t *testing.T) {
 				t.Errorf("%q: count scans the table:\n%s", qs, plan)
 			}
 		}
+	}
+}
+
+// EachStatRow streams what the statistics need for every message the
+// default list shows, in one pass (issue #19).
+func TestEachStatRow(t *testing.T) {
+	for _, inc := range []bool{false, true} {
+		s, _ := searchFixture(t, Options{IncludeDeleted: inc})
+		all, err := s.Search(SearchParams{Limit: 1000})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := map[int64]Row{}
+		for _, r := range all.Items {
+			want[r.ID] = r
+		}
+		n := 0
+		err = s.EachStatRow(context.Background(), func(r Row) {
+			n++
+			w, ok := want[r.ID]
+			if !ok || !w.Date.Equal(r.Date) || w.Flags != r.Flags || w.HasAttachment != r.HasAttachment ||
+				w.FromEmail != r.FromEmail || w.FromName != r.FromName {
+				t.Errorf("includeDeleted=%v: row %+v, want %+v", inc, r, w)
+			}
+		})
+		if err != nil || n != len(want) {
+			t.Errorf("includeDeleted=%v: %d rows, want %d (err %v)", inc, n, len(want), err)
+		}
+	}
+	s, _ := searchFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := s.EachStatRow(ctx, func(Row) {}); !errors.Is(err, context.Canceled) {
+		t.Errorf("cancelled: %v", err)
 	}
 }

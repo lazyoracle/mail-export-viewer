@@ -21,7 +21,6 @@ import (
 const (
 	topSendersN  = 20
 	topFoldersN  = 20
-	statsPage    = 1000
 	statsRefresh = 30 * time.Second
 )
 
@@ -201,22 +200,8 @@ func (s *Server) statistics(ctx context.Context) (*statsJSON, error) {
 		return c.st, nil
 	}
 	var acc statsAcc
-	cursor := ""
-	for {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		res, err := s.st.Search(index.SearchParams{Sort: "date_asc", Limit: statsPage, Cursor: cursor})
-		if err != nil {
-			return nil, err
-		}
-		for _, row := range res.Items {
-			acc.add(row)
-		}
-		if res.NextCursor == "" {
-			break
-		}
-		cursor = res.NextCursor
+	if err := s.st.EachStatRow(ctx, acc.add); err != nil {
+		return nil, err
 	}
 	st := acc.result()
 	st.ByFolder, st.BySource = []folderCount{}, []sourceCount{}
