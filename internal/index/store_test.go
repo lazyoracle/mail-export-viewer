@@ -211,3 +211,19 @@ func TestResetKeepsIDsUnique(t *testing.T) {
 		t.Errorf("id after Reset = %d, want > %d", id, old)
 	}
 }
+
+func TestResetLeavesNoMailText(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "index.db")
+	s := openAt(t, db, Options{})
+	const marker = "Zqxjvmarkerword"
+	index(t, s, newFake(t, "mbox", "a", rawEntry("A", 1, marker)))
+	if err := s.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{db, db + "-wal"} {
+		b, _ := os.ReadFile(p)
+		if strings.Contains(string(b), marker) {
+			t.Errorf("%s still holds indexed text after Reset", filepath.Base(p))
+		}
+	}
+}

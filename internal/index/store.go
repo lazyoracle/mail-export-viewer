@@ -309,7 +309,8 @@ func wipe(dbPath string) error {
 }
 
 // Reset forgets everything indexed (for a forced re-index), keeping the
-// database file and the lock. It returns ErrBusy while IndexSources runs.
+// database file and the lock, and vacuums so no indexed text remains on
+// disk. It returns ErrBusy while IndexSources runs.
 func (s *Store) Reset() error {
 	if !s.runMu.TryLock() {
 		return ErrBusy
@@ -329,6 +330,12 @@ func (s *Store) Reset() error {
 	}
 	if _, err := s.wdb.Exec(`INSERT INTO meta(key, value) VALUES('next_id', ?)`, nextID); err != nil {
 		return err
+	}
+	// Leave no mail text behind in free pages or the WAL.
+	for _, q := range []string{`VACUUM`, `PRAGMA wal_checkpoint(TRUNCATE)`} {
+		if _, err := s.wdb.Exec(q); err != nil {
+			return err
+		}
 	}
 	s.mu.Lock()
 	s.status = Progress{}
