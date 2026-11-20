@@ -104,9 +104,9 @@ func TestPropsBounded(t *testing.T) {
 	}
 }
 
-func TestMessageIDAndStatusKey(t *testing.T) {
+func TestMessageID(t *testing.T) {
 	m := meta(t, "Message-ID: <abc@example.com>\nX-Mozilla-Status: 0001", nil)
-	if m.MessageID != "abc@example.com" || m.StatusKey != "0001" {
+	if m.MessageID != "abc@example.com" {
 		t.Errorf("%+v", m)
 	}
 }

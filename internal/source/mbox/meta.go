@@ -21,7 +21,6 @@ type headerMeta struct {
 	Labels, Tags []string
 	Props        []source.Prop
 	MessageID    string
-	StatusKey    string // trimmed X-Mozilla-Status value, "" when absent
 }
 
 // X-Mozilla-Status bits (Thunderbird msgFlags): read, replied, marked
@@ -78,7 +77,6 @@ func headerMetadata(h mail.Header, tagInfo map[string]source.TagStyle) headerMet
 	// Thunderbird flags. Without X-Mozilla-Status nothing is known, and the
 	// message counts as read.
 	if v := strings.TrimSpace(h.Get("X-Mozilla-Status")); v != "" {
-		m.StatusKey = v
 		if st, ok := parseHex(v); ok {
 			m.Flags |= mozFlags(st)
 		}

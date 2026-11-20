@@ -28,6 +28,7 @@ type mboxSource struct {
 	path, folder string
 	sidecar      source.Sidecar // may be nil
 	tagInfo      map[string]source.TagStyle
+	sidecarErr   error // from SidecarFor; reported by every Scan
 }
 
 func open(c source.Candidate) (source.Source, error) {
@@ -42,7 +43,10 @@ func open(c source.Candidate) (source.Source, error) {
 	if s.folder == "" {
 		s.folder = folderName(filepath.Base(c.Path), true)
 	}
-	if s.sidecar = source.SidecarFor(c.Path); s.sidecar != nil {
+	// (nil, err): unusable, header metadata only; (sc, err): usable but
+	// degraded. Either way err is reported as a warning by Scan.
+	s.sidecar, s.sidecarErr = source.SidecarFor(c.Path)
+	if s.sidecar != nil {
 		s.tagInfo = s.sidecar.TagInfo()
 	}
 	return s, nil
@@ -69,6 +73,9 @@ func (s *mboxSource) Scan(ctx context.Context, emit func(source.Entry) error, wa
 		return err
 	}
 	defer f.Close()
+	if s.sidecarErr != nil {
+		warn(fmt.Errorf("%s: sidecar: %w", s.path, s.sidecarErr))
+	}
 	var cbErr error
 	emitted := 0
 	err = scanMessages(f, scanPrefix, func(m *message) error {
@@ -118,7 +125,7 @@ func (s *mboxSource) entry(m *message) source.Entry {
 		Loc: source.Locator{Offset: m.Offset, Length: m.Length}, Raw: m.Raw, Date: m.Date,
 	}
 	if s.sidecar != nil {
-		if sm, ok := s.sidecar.Lookup(hm.MessageID, m.Offset, hm.StatusKey); ok {
+		if sm, ok := s.sidecar.Lookup(hm.MessageID, m.Offset); ok {
 			e.Flags = sm.Flags &^ source.HasAttachment
 			e.Tags = appendUnique(e.Tags, sm.Tags...)
 			e.Labels = appendUnique(e.Labels, sm.Labels...)

@@ -50,11 +50,12 @@
 // # Sidecar
 //
 // Open asks source.SidecarFor(path) once. For each message Scan calls
-// Lookup(Message-ID, From_ offset, X-Mozilla-Status value); a hit replaces
-// the header-derived flags (HasAttachment is left to Entry.Resolve) and
-// appends Tags, Labels and Props without duplicates. Inputs includes the
-// sidecar's inputs. The X-Mozilla-Status value passed as statusKey is the
-// raw hex text ("0009"), the only status-like key the headers hold.
+// Lookup(Message-ID, From_ offset); a hit replaces the header-derived flags
+// (HasAttachment is left to Entry.Resolve) and appends Tags, Labels and
+// Props without duplicates. Inputs includes the sidecar's inputs. A provider
+// result of (nil, nil) means no sidecar; (nil, err) keeps header metadata
+// only; (sc, err) uses sc; in the last two cases every Scan reports err
+// through warn first.
 //
 // # Folders
 //

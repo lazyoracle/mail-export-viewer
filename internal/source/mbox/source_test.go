@@ -19,24 +19,31 @@ import (
 var (
 	sidecarMu   sync.Mutex
 	fakeSidecar = map[string]source.Sidecar{}
+	fakeErr     = map[string]error{}
 )
 
 func init() {
-	source.RegisterSidecarProvider(func(p string) source.Sidecar {
+	source.RegisterSidecarProvider(func(p string) (source.Sidecar, error) {
 		sidecarMu.Lock()
 		defer sidecarMu.Unlock()
-		return fakeSidecar[p]
+		return fakeSidecar[p], fakeErr[p]
 	})
 }
 
 func setSidecar(t *testing.T, path string, sc source.Sidecar) {
 	t.Helper()
+	setProvider(t, path, sc, nil)
+}
+
+func setProvider(t *testing.T, path string, sc source.Sidecar, err error) {
+	t.Helper()
 	sidecarMu.Lock()
-	fakeSidecar[path] = sc
+	fakeSidecar[path], fakeErr[path] = sc, err
 	sidecarMu.Unlock()
 	t.Cleanup(func() {
 		sidecarMu.Lock()
 		delete(fakeSidecar, path)
+		delete(fakeErr, path)
 		sidecarMu.Unlock()
 	})
 }
@@ -51,11 +58,10 @@ type stubSidecar struct {
 type lookupArgs struct {
 	id     string
 	offset int64
-	key    string
 }
 
-func (s *stubSidecar) Lookup(id string, off int64, key string) (source.SidecarMeta, bool) {
-	s.seen = append(s.seen, lookupArgs{id, off, key})
+func (s *stubSidecar) Lookup(id string, off int64) (source.SidecarMeta, bool) {
+	s.seen = append(s.seen, lookupArgs{id, off})
 	m, ok := s.byID[id]
 	return m, ok
 }
@@ -250,9 +256,9 @@ func TestSidecar(t *testing.T) {
 	if es[2].Flags != 0 {
 		t.Errorf("third: %q", es[2].Flags)
 	}
-	// Lookup got the message-id, the From_ offset and the status value.
-	if len(sc.seen) < 3 || sc.seen[0] != (lookupArgs{"gm@example.com", 0, ""}) ||
-		sc.seen[1] != (lookupArgs{"tb@example.com", es[1].Loc.Offset, "0009"}) {
+	// Lookup got the message-id and the From_ offset.
+	if len(sc.seen) < 3 || sc.seen[0] != (lookupArgs{"gm@example.com", 0}) ||
+		sc.seen[1] != (lookupArgs{"tb@example.com", es[1].Loc.Offset}) {
 		t.Errorf("Lookup calls: %+v", sc.seen)
 	}
 	// HasAttachment (set by Resolve) survives the replacement of flags.
@@ -383,5 +389,47 @@ func TestPanicRecovery(t *testing.T) {
 	e, ok := safeEntry(func() source.Entry { panic("boom") }, func(err error) { warned = append(warned, err) })
 	if ok || len(warned) != 1 || !strings.Contains(warned[0].Error(), "boom") {
 		t.Errorf("safeEntry = %+v %v, warnings %v", e, ok, warned)
+	}
+}
+
+func TestSidecarProviderConventions(t *testing.T) {
+	dir := t.TempDir()
+	boom := errors.New("sidecar broke")
+	row := map[string]source.SidecarMeta{"gm@example.com": {Flags: source.Answered}}
+	for _, tc := range []struct {
+		name      string
+		sc        source.Sidecar
+		err       error
+		wantFlags source.Flags // of the first message (msgGm: Unread|Starred from headers)
+		wantWarn  bool
+		wantInput bool
+	}{
+		{"none", nil, nil, source.Unread | source.Starred, false, false},
+		{"unusable keeps header metadata", nil, boom, source.Unread | source.Starred, true, false},
+		{"usable", &stubSidecar{byID: row, inputs: []string{"/x/Inbox.msf"}}, nil, source.Answered, false, true},
+		{"degraded is used and warned", &stubSidecar{byID: row, inputs: []string{"/x/Inbox.msf"}}, boom, source.Answered, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeFile(t, filepath.Join(dir, strings.ReplaceAll(tc.name, " ", "_")), mboxOf(msgGm))
+			setProvider(t, path, tc.sc, tc.err)
+			src := openMbox(t, path, "x")
+			var warns []error
+			var es []source.Entry
+			err := src.Scan(context.Background(), func(e source.Entry) error { e.Resolve(); es = append(es, e); return nil },
+				func(err error) { warns = append(warns, err) })
+			if err != nil || len(es) != 1 {
+				t.Fatalf("Scan: %v, %d entries", err, len(es))
+			}
+			if es[0].Flags != tc.wantFlags {
+				t.Errorf("flags %q, want %q", es[0].Flags, tc.wantFlags)
+			}
+			if tc.wantWarn != (len(warns) == 1 && errors.Is(warns[0], boom)) || (!tc.wantWarn && len(warns) != 0) {
+				t.Errorf("warnings %v, want warn=%v", warns, tc.wantWarn)
+			}
+			if got := len(src.Inputs()) == 2; got != tc.wantInput {
+				t.Errorf("Inputs %q", src.Inputs())
+			}
+			// Reported once per Scan, not per message; a second Scan warns again.
+		})
 	}
 }
