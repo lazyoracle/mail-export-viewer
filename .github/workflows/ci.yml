@@ -38,6 +38,8 @@ jobs:
       - name: gofmt
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
       - run: make vet
+      - name: vet other targets (darwin/arm64; windows for hygiene only, not supported)
+        run: GOOS=darwin GOARCH=arm64 go vet ./... && GOOS=windows go vet ./...
       - name: tests (race detector)
         run: go test -race -count=1 -timeout 45m ./...
       - name: UI unit tests (node)

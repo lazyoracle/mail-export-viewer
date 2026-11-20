@@ -120,5 +120,14 @@ In short:
   pin each one to a full commit SHA checked against the action's repository
   (with the tag as a comment). Dependabot (`.github/dependabot.yml`) then
   keeps the pins current.
+- **Go standard library.** The binaries are statically linked: they embed
+  the Go standard library (`net/http`, `archive/zip`, `database/sql`, ...)
+  of the toolchain that built them. CI and releases build with the latest
+  Go 1.24.x patch release (`go-version: '1.24.x'`, `check-latest: true`,
+  `GOTOOLCHAIN=local`) and print it; `go version <binary>` shows it. When Go
+  publishes a security release for a package the viewer uses, rebuild and
+  release, even if the project's code did not change. Binaries you build
+  yourself carry your local toolchain's fixes, so build with a current
+  patch release.
 - **No signatures yet.** Release binaries are not signed or notarised. Verify
   them with `SHA256SUMS`, or build from source.

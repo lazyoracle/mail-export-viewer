@@ -41,9 +41,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: toolchain (the Go release whose standard library is in the binaries)
+        run: go version && go env GOTOOLCHAIN GOVERSION
       - name: test
         run: |
-          go version
           test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
           go vet ./...
           go test -count=1 -timeout 45m ./...
