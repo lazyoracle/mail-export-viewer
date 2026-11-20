@@ -16,6 +16,9 @@ const (
 	maxFolderLen = 4096
 	maxLimit     = 1000
 	maxCIDLen    = 998
+	// maxThreadRows caps /api/threads (truncated:true beyond it; the
+	// requested message is always included).
+	maxThreadRows = 5000
 	// maxStatusWarnings and maxWarningLen bound the warnings per source in
 	// /api/status.
 	maxStatusWarnings = 20
@@ -128,12 +131,8 @@ func searchParams(r *http.Request) (index.SearchParams, error) {
 	if len(p.Folder) > maxFolderLen {
 		return p, badRequest("folder too long")
 	}
-	switch q.Get("deleted") {
-	case "":
-	case "only":
-		p.Q += " is:deleted"
-	default:
-		return p, badRequest(`deleted must be "only" or absent`)
+	if p.Deleted, err = deletedMode(q, true); err != nil {
+		return p, err
 	}
 	p.Sort = q.Get("sort")
 	if !validSorts[p.Sort] {
@@ -151,6 +150,25 @@ func searchParams(r *http.Request) (index.SearchParams, error) {
 		return p, index.ErrBadCursor
 	}
 	return p, nil
+}
+
+// deletedMode parses the deleted parameter: absent (the server default,
+// /api/status includeDeleted), "hide", "include", or "only" when allowed.
+func deletedMode(q url.Values, allowOnly bool) (index.DeletedMode, error) {
+	switch v := q.Get("deleted"); {
+	case v == "":
+		return index.DeletedDefault, nil
+	case v == "hide":
+		return index.DeletedHide, nil
+	case v == "include":
+		return index.DeletedInclude, nil
+	case v == "only" && allowOnly:
+		return index.DeletedOnly, nil
+	}
+	if allowOnly {
+		return 0, badRequest(`deleted must be "hide", "include", "only" or absent`)
+	}
+	return 0, badRequest(`deleted must be "hide", "include" or absent`)
 }
 
 func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
@@ -180,7 +198,17 @@ func (s *Server) handleThread(w http.ResponseWriter, r *http.Request, idText str
 		s.fail(w, err)
 		return
 	}
-	rows, err := s.st.Thread(id)
+	q, err := query(r)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	mode, err := deletedMode(q, true)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	rows, total, err := s.st.ThreadPage(index.ThreadParams{ID: id, Deleted: mode, Limit: maxThreadRows})
 	if err == nil && len(rows) == 0 {
 		err = index.ErrNotFound
 	}
@@ -191,10 +219,10 @@ func (s *Server) handleThread(w http.ResponseWriter, r *http.Request, idText str
 	items := make([]itemJSON, 0, len(rows))
 	for _, row := range rows {
 		it := toItem(row)
-		it.ThreadCount = len(rows)
+		it.ThreadCount = total
 		items = append(items, it)
 	}
-	s.writeJSON(w, map[string]any{"items": items})
+	s.writeJSON(w, map[string]any{"items": items, "truncated": total > len(rows)})
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -282,7 +310,23 @@ func truncate(s string, n int) string {
 }
 
 func (s *Server) handleFacets(w http.ResponseWriter, r *http.Request) {
-	fc, err := s.st.Facets()
+	q, err := query(r)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	mode, err := deletedMode(q, false)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	var fc index.Facets
+	switch mode {
+	case index.DeletedDefault:
+		fc, err = s.st.Facets()
+	default:
+		fc, err = s.st.FacetsFor(mode == index.DeletedInclude)
+	}
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -320,7 +364,7 @@ func (s *Server) folders(ns []index.FolderNode) []folderJSON {
 func terms(ts []index.TermCount) []termJSON {
 	out := make([]termJSON, 0, len(ts))
 	for _, t := range ts {
-		out = append(out, termJSON{Name: t.Name, Color: t.Color, Count: t.Count, Unread: t.Unread})
+		out = append(out, termJSON{Name: t.Name, Color: safeHexColor(t.Color), Count: t.Count, Unread: t.Unread})
 	}
 	return out
 }

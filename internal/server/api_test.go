@@ -799,3 +799,141 @@ func TestHandlersWhileIndexing(t *testing.T) {
 		t.Fatalf("status during run = %+v", s)
 	}
 }
+
+// deleted=only is enforced outside the query text: no query (open quote,
+// 4 KiB, 64 items) can bring normal messages in, and the default view never
+// shows deleted ones.
+func TestDeletedParam(t *testing.T) {
+	f := newFixture(t)
+	queries := []string{"", "bob", `"bob`, `subject:"x`, `subject:"thrown`, strings.Repeat("bob ", 1024),
+		strings.TrimSpace(strings.Repeat("bob ", 64)), "-is:deleted", `label:"`}
+	for _, q := range queries {
+		if len(q) > maxQueryLen {
+			t.Fatalf("query of %d bytes over the cap", len(q))
+		}
+		for _, mode := range []string{"only", "", "hide", "include"} {
+			target := "/api/messages?limit=1000&q=" + url.QueryEscape(q)
+			if mode != "" {
+				target += "&deleted=" + mode
+			}
+			var l listJ
+			f.getJSON(target, &l)
+			var del, normal int
+			for _, it := range l.Items {
+				if contains(it.Flags, "deleted") {
+					del++
+				} else {
+					normal++
+				}
+			}
+			switch mode {
+			case "only":
+				if normal != 0 {
+					t.Errorf("q=%.20q only: %d normal messages", q, normal)
+				}
+			case "", "hide":
+				if del != 0 {
+					t.Errorf("q=%.20q %s: %d deleted messages", q, mode, del)
+				}
+			}
+		}
+	}
+	count := func(target string) int {
+		var l listJ
+		f.getJSON(target, &l)
+		return len(l.Items)
+	}
+	if n := count("/api/messages?q=bob&deleted=only"); n != 1 {
+		t.Errorf("only: %d", n)
+	}
+	if n := count("/api/messages?q=" + url.QueryEscape(strings.Repeat("bob ", 1024)) + "&deleted=only"); n != 1 {
+		t.Errorf("only, 4 KiB query: %d", n)
+	}
+	if a, b := count("/api/messages?deleted=include"), count("/api/messages"); a != 10 || b != 9 {
+		t.Errorf("include %d, default %d", a, b)
+	}
+	var fc facetsJSON
+	f.getJSON("/api/facets?deleted=include", &fc)
+	for _, n := range fc.Folders {
+		if n.Path == "Archive" && n.Count != 6 {
+			t.Errorf("facets include: Archive %d", n.Count)
+		}
+	}
+	f.getJSON("/api/facets", &fc)
+	for _, n := range fc.Folders {
+		if n.Path == "Archive" && n.Count != 5 {
+			t.Errorf("facets default: Archive %d", n.Count)
+		}
+	}
+	var th struct{ Items []itemJ }
+	f.getJSON("/api/threads/"+itoa(f.id("Thrown away"))+"?deleted=hide", &th)
+	if len(th.Items) != 1 {
+		t.Errorf("thread of a deleted message: %+v", th.Items)
+	}
+	for _, p := range []string{"/api/messages?deleted=all", "/api/facets?deleted=1", "/api/threads/1?deleted=x", "/api/facets?deleted=only"} {
+		f.wantError(f.do("GET", p), http.StatusBadRequest)
+	}
+	// The global default is reported and followed.
+	g := newFixture(t, func(c *Config) { c.IncludeDeleted = true })
+	var s statusJSON
+	g.getJSON("/api/status", &s)
+	if !s.IncludeDeleted {
+		t.Error("includeDeleted not reported")
+	}
+}
+
+func TestThreadCapped(t *testing.T) {
+	if testing.Short() {
+		t.Skip("indexes 6000 messages")
+	}
+	dir := t.TempDir()
+	msgs := make([]string, 6000)
+	for i := range msgs {
+		irt := ""
+		if i > 0 {
+			irt = fmt.Sprintf("In-Reply-To: <c%d@example.com>\n", i-1)
+		}
+		msgs[i] = fmt.Sprintf("From: P <p@example.com>\nSubject: chain %d\nMessage-ID: <c%d@example.com>\n%s"+
+			"Date: %s\n\nx\n", i, i, irt, time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(i)*time.Minute).Format(time.RFC1123Z))
+	}
+	writeMbox(t, filepath.Join(dir, "Chain"), msgs...)
+	f := fixtureFor(t, dir)
+	var th struct {
+		Items     []itemJ
+		Truncated bool
+	}
+	last := f.id("chain 5999")
+	f.getJSON("/api/threads/"+itoa(last), &th)
+	if len(th.Items) != maxThreadRows || !th.Truncated || th.Items[len(th.Items)-1].ID != last ||
+		th.Items[0].Subject != "chain 0" || th.Items[0].ThreadCount != 6000 {
+		t.Fatalf("capped thread: %d items, truncated %v, last %d, first %+v", len(th.Items), th.Truncated, th.Items[len(th.Items)-1].ID, th.Items[0])
+	}
+	f.getJSON("/api/threads/"+itoa(f.id("chain 3")), &th)
+	if len(th.Items) != maxThreadRows || th.Items[3].Subject != "chain 3" {
+		t.Fatalf("early member: %d items", len(th.Items))
+	}
+}
+
+func TestTagColorsValidated(t *testing.T) {
+	got := tagsJSON([]index.Tag{{Name: "a", Color: "#FF9900"}, {Name: "b", Color: "#ff99aa"}, {Name: "c", Color: "red"}, {Name: "d", Color: "#fff"}, {Name: "e", Color: "#12345G"},
+		{Name: "f", Color: "#FF9900;background:url(x)"}, {Name: "g", Color: ""}})
+	want := []string{"#FF9900", "#ff99aa", "", "", "", "", ""}
+	for i, tg := range got {
+		if tg.Color != want[i] {
+			t.Errorf("%s: colour %q, want %q", tg.Name, tg.Color, want[i])
+		}
+	}
+	if c := terms([]index.TermCount{{Name: "x", Color: "javascript:x"}})[0].Color; c != "" {
+		t.Errorf("term colour %q", c)
+	}
+}
+
+func TestLoadWeight(t *testing.T) {
+	for _, c := range []struct{ length, factor, want int64 }{
+		{1000, 1, 1000}, {1000, 3, 3000}, {0, 1, unknownSize}, {0, 3, 3 * unknownSize},
+	} {
+		if got := loadWeight(c.length, c.factor); got != c.want {
+			t.Errorf("loadWeight(%d, %d) = %d, want %d", c.length, c.factor, got, c.want)
+		}
+	}
+}

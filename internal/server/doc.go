@@ -67,20 +67,39 @@
 //
 // # Decisions
 //
-//   - Deleted messages follow index.Options.IncludeDeleted (one Store,
-//     one setting); the list takes deleted=only to show just the deleted
-//     ones (is:deleted). A per-request "include deleted" union is not
-//     possible with the index API.
-//   - Message bytes held by concurrent loads are bounded (512 MiB budget;
-//     the size is Loc.Length when known, else 32 MiB); text and HTML in a
-//     detail are capped at 8 MiB each (flagged truncated), headers at 1000.
+//   - Deleted messages: the list, threads and facets take
+//     deleted=hide|include (and only, for list and threads), passed to
+//     the index as SearchParams/ThreadParams.Deleted or FacetsFor, outside
+//     the query text, so no query can widen "only". Absent means the
+//     server default (Config.IncludeDeleted, reported by /api/status).
+//     Statistics always use the default.
+//   - Threads are capped at 5000 rows (truncated:true; the requested
+//     message is always included; threadCount is the full size).
+//   - Tag colours are passed on only as "#RRGGBB", else "".
+//   - Message bytes held by concurrent loads are bounded by a 512 MiB
+//     budget. A request weighs the message size (Loc.Length when known,
+//     else 32 MiB) times the copies it may hold: 1 for raw and
+//     attachments, 3 for the detail view and cid (Load's parse, plus Raw
+//     and its parse for cid inlining). Text and HTML in a detail are
+//     capped at 8 MiB each (flagged truncated), headers at 1000.
+//   - HEAD on raw/attachment/cid re-reads the message like GET (the
+//     length is only known after reading; net/http drops the body).
+//   - Config.UI is meant to be the embed.FS of internal/web: files are
+//     read whole per request, and nothing guards against symlinks in an
+//     os.DirFS, so do not pass a directory from disk.
+//   - HTTPServer's WriteTimeout (10 min) bounds a whole response, so a
+//     very slow client downloading a huge attachment (up to 256 MiB) is
+//     cut off; on loopback that is far beyond normal transfer times.
 //   - cid inlining re-reads the message once: Raw is parsed and used when
 //     its attachments equal Load's (raw-backed formats), otherwise each
 //     part comes from Source.Attachment.
 //   - Statistics (earlier-tool's: years, months, top senders; plus folders,
 //     sources, unread, attachments) take one pass over the listed messages
 //     and are cached until the index changes (at most every 30 s while
-//     indexing). Years and months are UTC.
+//     indexing). Years and months are UTC. One mutex guards the cache: while
+//     one request computes, concurrent /api/stats requests wait for it
+//     (that wait is not cancellable; the computing request stops when its
+//     own client goes away, and the next caller starts over).
 //   - The raw .eml is named after the subject (earlier-tool), else
 //     "message-<id>.eml".
 package server

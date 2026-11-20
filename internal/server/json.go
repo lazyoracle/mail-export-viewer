@@ -200,9 +200,23 @@ func flagNames(f source.Flags) []string { return nonNil(f.Names()) }
 func tagsJSON(ts []index.Tag) []tagJSON {
 	out := make([]tagJSON, 0, len(ts))
 	for _, t := range ts {
-		out = append(out, tagJSON{t.Name, t.Color})
+		out = append(out, tagJSON{t.Name, safeHexColor(t.Color)})
 	}
 	return out
+}
+
+// safeHexColor returns c if it is "#RRGGBB", else "" (colours come from
+// prefs.js and other input files; the UI may put them in style).
+func safeHexColor(c string) string {
+	if len(c) != 7 || c[0] != '#' {
+		return ""
+	}
+	for i := 1; i < 7; i++ {
+		if !isHex(c[i]) {
+			return ""
+		}
+	}
+	return c
 }
 
 func toItem(r index.Row) itemJSON {

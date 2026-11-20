@@ -39,9 +39,21 @@ type loaded struct {
 	release func()
 }
 
+// loadWeight is the load-budget weight of a message of length bytes (0:
+// unknown) read factor times over at once.
+func loadWeight(length, factor int64) int64 {
+	if length <= 0 {
+		length = unknownSize
+	}
+	return length * factor
+}
+
 // load finds message idText in the index and its source, and reserves load
 // budget for re-reading it (waiting ends when the request is cancelled).
-func (s *Server) load(r *http.Request, idText string) (*loaded, error) {
+// factor is how many copies of the message the request may hold at once:
+// 1 for raw and attachments, 3 for the detail view and cid (Load's parse,
+// plus Raw and its parse when cid images are inlined).
+func (s *Server) load(r *http.Request, idText string, factor int64) (*loaded, error) {
 	id, err := parseID(idText)
 	if err != nil {
 		return nil, err
@@ -54,10 +66,7 @@ func (s *Server) load(r *http.Request, idText string) (*loaded, error) {
 	if !ok {
 		return nil, errSourceGone
 	}
-	weight := m.Loc.Length
-	if weight <= 0 {
-		weight = unknownSize
-	}
+	weight := loadWeight(m.Loc.Length, factor)
 	if err := s.sem.acquire(r.Context(), weight); err != nil {
 		return nil, err
 	}
@@ -66,7 +75,7 @@ func (s *Server) load(r *http.Request, idText string) (*loaded, error) {
 }
 
 func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request, idText string) {
-	l, err := s.load(r, idText)
+	l, err := s.load(r, idText, 3)
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -165,7 +174,7 @@ func sameAttachments(a, b []mail.Attachment) bool {
 
 func (s *Server) handleRaw(w http.ResponseWriter, r *http.Request, idText string) {
 	w.Header().Add("Content-Security-Policy", "sandbox")
-	l, err := s.load(r, idText)
+	l, err := s.load(r, idText, 1)
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -200,7 +209,7 @@ func (s *Server) handleAttachment(w http.ResponseWriter, r *http.Request, idText
 		s.fail(w, badRequest(`inline must be "1" or absent`))
 		return
 	}
-	l, err := s.load(r, idText)
+	l, err := s.load(r, idText, 1)
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -232,7 +241,7 @@ func (s *Server) handleCID(w http.ResponseWriter, r *http.Request, idText, token
 		}
 		w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
 	}
-	l, err := s.load(r, idText)
+	l, err := s.load(r, idText, 3)
 	if err != nil {
 		s.fail(w, err)
 		return

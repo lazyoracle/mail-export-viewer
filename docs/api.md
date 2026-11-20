@@ -117,8 +117,11 @@ served from the UI tree.
 }
 ```
 
-`includeDeleted` reports the `-include-deleted` setting. When it is
-false, messages flagged deleted are hidden from lists, counts and facets.
+`includeDeleted` reports the `-include-deleted` setting. It is the
+default for the per-request `deleted` parameter of `/api/messages`,
+`/api/threads/{id}` and `/api/facets`, so a UI toggle should start from
+it. When it is false and no `deleted` parameter is given, messages flagged
+deleted are hidden from lists, counts and facets.
 
 `indexing` describes the current or last indexing run:
 
@@ -162,6 +165,10 @@ sources the index still holds.
 ### `GET /api/facets`
 
 Data for the sidebar.
+
+| param | meaning |
+|---|---|
+| `deleted` | `include` counts messages flagged deleted, `hide` leaves them out. Absent means the server default (`/api/status` `includeDeleted`). `only` is not accepted here (`400`). |
 
 ```json
 {
@@ -208,8 +215,9 @@ To list a folder:
 
 **`labels`** are Gmail labels (mbox/eml sources). **`categories`** are
 Outlook categories (olm/pst sources). **`tags`** are Thunderbird tags.
-Each list is sorted by name, ignoring case. `color` is `"#RRGGBB"` or `""`;
-only tags have colours. To filter, add an operator to `q` with the name
+Each list is sorted by name, ignoring case. `color` is exactly
+`"#RRGGBB"` or `""` (the server drops any other value); only tags have
+colours. To filter, add an operator to `q` with the name
 quoted: `label:"Name"`, `category:"Name"`, `tag:"Name"`.
 
 **`flags`** has one entry per flag, in this order: `unread`, `starred`,
@@ -233,7 +241,7 @@ Lists or searches messages, one page at a time.
 | `source` | Only this source (`sources[].id`). |
 | `folderId` | Only this source folder (`folders[].sources[].folderId`). |
 | `folder` | Only folders with exactly this path (`folders[].path`, case-sensitive), in every source. Subfolders are not included. |
-| `deleted` | `only` lists only messages flagged deleted (the same as adding `is:deleted`). Leave it out for the normal view. |
+| `deleted` | Which messages flagged deleted to show: `hide`, `include`, or `only` (nothing else). Absent means the server default (`/api/status` `includeDeleted`). This is applied outside `q`, so no query text can bring normal messages into `only`. With `hide`, a query containing `is:deleted` still shows deleted messages. |
 
 The scope parameters can be combined; they are ANDed. An unknown id gives
 an empty list, not an error.
@@ -370,15 +378,26 @@ Errors: `404 not_found` (a stale id), `410 stale`, `410 gone`, `413 too_large`.
 
 ### `GET /api/threads/{id}`
 
-`{"items": [ … ]}`: every message in the thread containing message `{id}`,
-oldest first, with unknown dates last. The items have the list shape, and
-`threadCount` is the thread's length. An unknown id gives `404`.
+`{"items": [ … ], "truncated": false}`: every message in the thread
+containing message `{id}`, oldest first, with unknown dates last. The
+items have the list shape. An unknown id gives `404`.
+
+- At most 5000 messages are returned. When the thread is longer,
+  `truncated` is `true`, the first 5000 are returned, and message `{id}`
+  is always among them (it replaces the 5000th when it would fall
+  beyond). `threadCount` is always the full size of the thread.
+- `deleted` (`hide`, `include`, `only`; absent means the server default)
+  says whether messages flagged deleted are part of the thread. With
+  `hide`, message `{id}` itself is still shown. `only` behaves like
+  `include`, because a thread is shown whole.
 
 ### `GET /api/messages/{id}/raw`
 
 The message as `message/rfc822`, with
 `Content-Disposition: attachment; filename="<subject>.eml"` (or
-`message-<id>.eml` when there is no subject). mbox and eml messages are
+`message-<id>.eml` when there is no subject). `HEAD` costs as much as
+`GET` here (and for attachments and cid parts): the message is re-read
+to know the length. mbox and eml messages are
 returned byte for byte. PST and OLM messages are rebuilt as MIME with
 their attachments.
 
@@ -428,8 +447,9 @@ gives `404`. Use URLs exactly as they appear in `bodyHtml`.
 }
 ```
 
-- Statistics cover the messages the list shows, so deleted messages count
-  only with `-include-deleted`.
+- Statistics cover the messages the default list shows, so deleted
+  messages count only with `-include-deleted`. There is no `deleted`
+  parameter here.
 - Years and months are in UTC, sorted ascending.
 - `outOfRange` counts dates before 1980 or more than a year in the future.
   Those messages are left out of `byYear` and `byMonth`.
@@ -438,7 +458,8 @@ gives `404`. Use URLs exactly as they appear in `bodyHtml`.
 - `byFolder` holds the 20 largest folders.
 - The result is cached until the index changes. While indexing runs it is
   recomputed at most every 30 s, and `partial` is `true`.
-- The first call on a large archive can take several seconds.
+- The first call on a large archive can take several seconds. Concurrent
+  calls wait for the same computation.
 
 ## UI files
 
