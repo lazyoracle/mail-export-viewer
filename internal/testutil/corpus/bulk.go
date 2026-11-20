@@ -99,7 +99,9 @@ func (g *gen) bulk() error {
 			}
 			b, _ := body(tok)
 			if pad > 0 && written < pad {
-				b += strings.Repeat(g.words(12)+"\n", 400)
+				// Filler so that the file reaches pad bytes.
+				line := g.words(12) + "\n"
+				b += strings.Repeat(line, int(pad/int64(count))/len(line)+1)
 			}
 			m := &msg{headers: h, body: b}
 			if i%10 == 3 {
