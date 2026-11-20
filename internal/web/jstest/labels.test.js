@@ -123,3 +123,19 @@ test('row pills are not interactive (they sit inside listbox options)', () => {
   assert.equal(p.getAttribute('tabindex'), null);
   assert.equal(p.dataset.kind, 'label', 'a mouse click can still filter via delegation');
 });
+
+test('renderTermList: unchanged terms are not rebuilt, only re-marked (issue #21)', () => {
+  const ul = document.createElement('ul');
+  renderTermList(ul, 'label', TERMS, { isActive: () => false });
+  const first = ul.querySelector('.side-term');
+  const copy = TERMS.map((t) => ({ ...t }));
+  assert.equal(renderTermList(ul, 'label', copy, { isActive: (name) => name === 'alpha' }), 4);
+  assert.equal(ul.querySelector('.side-term'), first, 'same terms: entries kept');
+  assert.equal(first.getAttribute('aria-pressed'), 'true', 'pressed state updated in place');
+  copy[0].count += 1;
+  renderTermList(ul, 'label', copy, {});
+  assert.notEqual(ul.querySelector('.side-term'), first, 'a changed count rebuilds');
+  const again = ul.querySelector('.side-term');
+  assert.equal(renderTermList(ul, 'label', copy, { filter: 'zzz' }), 0);
+  assert.notEqual(ul.querySelector('.side-term'), again, 'a changed filter rebuilds');
+});

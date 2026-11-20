@@ -114,6 +114,15 @@ function sideTerm(kind, t, active) {
  * Returns the number shown.
  */
 export function renderTermList(ul, kind, terms, { isActive = () => false, filter = '' } = {}) {
+  // Facets are reloaded every second while indexing, mostly unchanged:
+  // rebuilding thousands of entries each time blocks the page, so equal
+  // input only updates the pressed state.
+  const key = termsKey(kind, terms || [], filter);
+  const prev = rendered.get(ul);
+  if (prev && prev.key === key) {
+    markActiveTerms(ul, isActive);
+    return prev.shown;
+  }
   const shown = filterTerms(terms || [], filter);
   const sysOf = (t) => kind === 'label' && isSystemLabel(t.name);
   const user = shown.filter((t) => !sysOf(t));
@@ -123,7 +132,17 @@ export function renderTermList(ul, kind, terms, { isActive = () => false, filter
   for (const t of sys) items.push(sideTerm(kind, t, isActive(t.name)));
   if (!shown.length) items.push(h('li', { class: 'term-none', text: 'Nothing matches' }));
   ul.replaceChildren(...items);
+  rendered.set(ul, { key, shown: shown.length });
   return shown.length;
+}
+
+/** What each rendered list was built from (see renderTermList). */
+const rendered = new WeakMap();
+
+function termsKey(kind, terms, filter) {
+  let k = `${kind}\u0000${filter}`;
+  for (const t of terms) k += `\u0000${t.name}\u0001${t.count}\u0001${t.unread}\u0001${t.color}`;
+  return k;
 }
 
 /** Updates which entries of a rendered list are pressed, in place. */
