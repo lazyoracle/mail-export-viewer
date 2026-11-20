@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lazyoracle/mail-export-viewer/internal/mail"
 	"github.com/lazyoracle/mail-export-viewer/internal/source"
 )
 
@@ -23,9 +24,10 @@ const (
 	// batchBytes ends a batch early so large messages do not pile up.
 	batchSize  = 2000
 	batchBytes = 16 << 20
-	// budgetBytes bounds the raw message bytes (Entry.Raw) queued, being
-	// summarised or waiting to be written in order, in budgetUnit units;
-	// an entry takes at least one unit and a larger-than-budget entry all.
+	// budgetBytes bounds the entry bytes (Raw, or the summary for formats
+	// that build it; see entryUnits) queued, being summarised or waiting
+	// to be written in order, in budgetUnit units; an entry takes at least
+	// one unit and a larger-than-budget entry all.
 	budgetBytes = 64 << 20
 	budgetUnit  = 64 << 10
 	budgetUnits = budgetBytes / budgetUnit
@@ -306,6 +308,36 @@ func (w *warnings) get() (int64, []string) {
 	return w.count, slices.Clone(w.first)
 }
 
+// entryUnits is the budget an entry takes: its Raw bytes or, for formats
+// that build the summary themselves (Raw empty), the summary text and
+// names, plus labels, tags and props; at least one unit, at most all.
+func entryUnits(e *source.Entry) int {
+	n := len(e.Raw)
+	if m := e.Msg; m != nil {
+		n += len(m.Text) + len(m.Subject) + len(m.MessageID) + len(m.InReplyTo)
+		for _, r := range m.References {
+			n += len(r)
+		}
+		for _, a := range m.AttachmentNames {
+			n += len(a)
+		}
+		for _, l := range [][]mail.Address{m.To, m.Cc, m.Bcc} {
+			for _, a := range l {
+				n += len(a.Name) + len(a.Email)
+			}
+		}
+	}
+	for _, l := range [][]string{e.Labels, e.Tags} {
+		for _, x := range l {
+			n += len(x)
+		}
+	}
+	for _, p := range e.Props {
+		n += len(p.Key) + len(p.Value)
+	}
+	return min(budgetUnits, max(1, (n+budgetUnit-1)/budgetUnit))
+}
+
 type job struct {
 	seq   int
 	e     source.Entry
@@ -347,7 +379,7 @@ func (r *run) indexOne(src source.Source, i int, fprint string) error {
 		defer close(jobs)
 		seq := 0
 		scanErr = src.Scan(ctx, func(e source.Entry) error {
-			units := min(budgetUnits, max(1, (len(e.Raw)+budgetUnit-1)/budgetUnit))
+			units := entryUnits(&e)
 			for range units {
 				select {
 				case budget <- struct{}{}:

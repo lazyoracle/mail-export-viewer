@@ -487,3 +487,49 @@ func TestScanOrderPreserved(t *testing.T) {
 		i++
 	}
 }
+
+func TestEntryUnitsCountSummaries(t *testing.T) {
+	big := msgEntry("A", 1, "s")
+	big.Msg.Text = strings.Repeat("x", 1<<20-1024) // plus headers: 16 units
+	labelled := msgEntry("A", 2, "s")
+	labelled.Labels = []string{strings.Repeat("l", 300<<10)}
+	labelled.Props = []source.Prop{{Key: "k", Value: strings.Repeat("v", 300<<10)}}
+	for _, c := range []struct {
+		name string
+		e    source.Entry
+		want int
+	}{
+		{"raw", source.Entry{Raw: make([]byte, 1<<20)}, 16},
+		{"small", msgEntry("A", 3, "s"), 1},
+		{"msg text", big, 16},
+		{"labels and props", labelled, 10},
+		{"huge", source.Entry{Raw: make([]byte, budgetBytes*2)}, budgetUnits},
+	} {
+		if got := entryUnits(&c.e); got != c.want {
+			t.Errorf("%s: units = %d, want %d", c.name, got, c.want)
+		}
+	}
+}
+
+func TestLargeSummariesDoNotDeadlock(t *testing.T) {
+	s := openStore(t)
+	var es []source.Entry
+	for i := range 5 {
+		e := msgEntry("A", uint64(i+1), "big")
+		e.Msg.Text = strings.Repeat("words ", budgetBytes/6/3)
+		es = append(es, e)
+	}
+	e := msgEntry("A", 99, "huge")
+	e.Msg.Text = strings.Repeat("y", budgetBytes+1)
+	es = append(es, e)
+	done := make(chan struct{})
+	go func() { index(t, s, newFake(t, source.OLM, "a.olm", es...)); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(60 * time.Second):
+		t.Fatal("indexing large summaries hangs")
+	}
+	if n := len(allRows(t, s)); n != 6 {
+		t.Errorf("rows = %d", n)
+	}
+}
