@@ -21,13 +21,20 @@
 //   - Load, Raw and Attachment check that the locator still delimits a
 //     message: a separator line at Offset, and the range ending at the end
 //     of the file or right before another separator line; otherwise ErrStale.
+//     A short read is ErrStale too. The Locator carries no identity of the
+//     message, so a rewritten file that happens to have a separator at the
+//     same offset and the next one at the same end is not detected (residual
+//     risk, accepted: the index also re-scans when size/mtime change). Only
+//     regular files are opened (stat before open, then fstat), so a FIFO
+//     cannot block.
 //     Files are opened per call, never held, so thousands of mbox files can
 //     be open as Sources at once.
 //
 // # Metadata
 //
-//   - Gmail X-Gmail-Labels (mail.ParseLabels) become Labels; Unread, Starred
-//     and Important (case-insensitive) also set flags and stay as labels.
+//   - Gmail X-Gmail-Labels (mail.ParseLabels) become Labels; Unread, Starred,
+//     Important, Spam (Junk), Trash (Deleted) and Drafts/Draft (Draft)
+//     (case-insensitive) also set flags and stay as labels.
 //   - X-Mozilla-Status: no read bit is Unread; 0x2 Answered; 0x4 Starred; 0x8
 //     (expunged, not yet compacted) Deleted; 0x1000 Forwarded. X-Mozilla-Status2
 //     0x00200000 (IMAP deleted) is Deleted; X-Mozilla-Draft-Info marks a Draft.
@@ -53,7 +60,8 @@
 //
 // Folder is derived from Candidate.Rel: Thunderbird "X.sbd" directories
 // become "X" ("Archive.sbd/2019" is "Archive/2019"), and a .mbox/.mbx/.mbs
-// extension of the file name is dropped. Loose .eml files are the messages
+// extension of the file name is dropped; Apple Mail's "Name.mbox/mbox" is
+// "Name". Loose .eml files are the messages
 // of their directory's folder (Rel, or its base name when Rel is empty); a
 // Locator names the file within the directory, and only files the Candidate
 // listed can be loaded. Their fallback date is the file's modification time.

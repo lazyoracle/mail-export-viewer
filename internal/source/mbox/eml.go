@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -74,15 +73,11 @@ func (s *emlSource) Scan(ctx context.Context, emit func(source.Entry) error, war
 
 // readPrefix returns at most n bytes of the file and its modification time.
 func readPrefix(path string, n int) ([]byte, time.Time, error) {
-	f, err := os.Open(path)
+	f, fi, err := openRegular(path)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
 	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil {
-		return nil, time.Time{}, err
-	}
 	buf, err := io.ReadAll(io.LimitReader(f, int64(n)))
 	return buf, fi.ModTime(), err
 }
@@ -93,18 +88,27 @@ func (s *emlSource) read(loc source.Locator) ([]byte, time.Time, error) {
 	if !ok {
 		return nil, time.Time{}, fmt.Errorf("eml: %q is not a file of %s: %w", loc.Name, s.dir, source.ErrStale)
 	}
-	fi, err := os.Stat(p)
+	f, fi, err := openRegular(p)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, time.Time{}, fmt.Errorf("eml: %s: %w", p, source.ErrStale)
 	}
 	if err != nil {
 		return nil, time.Time{}, err
 	}
+	defer f.Close()
 	if fi.Size() > source.MaxMessageBytes {
 		return nil, time.Time{}, fmt.Errorf("eml: %s: %d bytes: %w", p, fi.Size(), source.ErrTooLarge)
 	}
-	raw, err := os.ReadFile(p)
-	return raw, fi.ModTime(), err
+	// Bounded on the same handle, so a file growing after the check cannot
+	// exceed the limit either.
+	raw, err := io.ReadAll(io.LimitReader(f, source.MaxMessageBytes+1))
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	if len(raw) > source.MaxMessageBytes {
+		return nil, time.Time{}, fmt.Errorf("eml: %s: over %d bytes: %w", p, source.MaxMessageBytes, source.ErrTooLarge)
+	}
+	return raw, fi.ModTime(), nil
 }
 
 func (s *emlSource) Raw(loc source.Locator) ([]byte, error) {

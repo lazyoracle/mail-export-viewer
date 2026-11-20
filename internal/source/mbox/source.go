@@ -64,7 +64,7 @@ func (s *mboxSource) Scan(ctx context.Context, emit func(source.Entry) error, wa
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	f, err := os.Open(s.path)
+	f, _, err := openRegular(s.path)
 	if err != nil {
 		return err
 	}
@@ -166,15 +166,11 @@ func (s *mboxSource) read(loc source.Locator) ([]byte, time.Time, error) {
 	stale := func(why string) ([]byte, time.Time, error) {
 		return nil, time.Time{}, fmt.Errorf("mbox: %s at %d+%d: %s: %w", s.path, loc.Offset, loc.Length, why, source.ErrStale)
 	}
-	f, err := os.Open(s.path)
+	f, fi, err := openRegular(s.path)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
 	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil {
-		return nil, time.Time{}, err
-	}
 	size := fi.Size()
 	if loc.Offset < 0 || loc.Length <= 0 || loc.Offset >= size || loc.Length > size-loc.Offset {
 		return stale("outside the file")
@@ -183,7 +179,10 @@ func (s *mboxSource) read(loc source.Locator) ([]byte, time.Time, error) {
 		return nil, time.Time{}, fmt.Errorf("mbox: %s at %d: %d bytes: %w", s.path, loc.Offset, loc.Length, source.ErrTooLarge)
 	}
 	buf := make([]byte, loc.Length)
-	if _, err := f.ReadAt(buf, loc.Offset); err != nil && !(err == io.EOF) {
+	if n, err := f.ReadAt(buf, loc.Offset); n < len(buf) {
+		if err == nil || err == io.EOF {
+			return stale("file shrank while reading")
+		}
 		return nil, time.Time{}, err
 	}
 	nl := bytes.IndexByte(buf, '\n')
@@ -205,6 +204,30 @@ func (s *mboxSource) read(loc source.Locator) ([]byte, time.Time, error) {
 	}
 	_, date := parseSeparator(buf[:nl+1])
 	return trimSeparatorBlank(unquote(buf[nl+1:])), date, nil
+}
+
+// openRegular opens path read-only, refusing anything but a regular file
+// (a FIFO or device could block or never end). The path is stat-ed before
+// opening, so a FIFO is never opened, and the handle is checked again.
+func openRegular(path string) (*os.File, os.FileInfo, error) {
+	if fi, err := os.Stat(path); err != nil {
+		return nil, nil, err
+	} else if !fi.Mode().IsRegular() {
+		return nil, nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	fi, err := f.Stat()
+	if err == nil && !fi.Mode().IsRegular() {
+		err = fmt.Errorf("%s is not a regular file", path)
+	}
+	if err != nil {
+		f.Close()
+		return nil, nil, err
+	}
+	return f, fi, nil
 }
 
 func (s *mboxSource) Raw(loc source.Locator) ([]byte, error) {
@@ -231,9 +254,15 @@ func (s *mboxSource) Attachment(loc source.Locator, index int) (mail.Attachment,
 // folderName turns a Candidate.Rel (raw '/'-separated path below the
 // discovery root) into a folder path: Thunderbird's "X.sbd" directories
 // become "X", and with stripExt a ".mbox"/".mbx"/".mbs" extension of the last
-// element is dropped. A name that would become empty is kept as is.
+// element is dropped; Apple Mail's "Name.mbox/mbox" is "Name". A name that would become empty is kept as is.
 func folderName(rel string, stripExt bool) string {
 	parts := strings.Split(rel, "/")
+	// Apple Mail: "Name.mbox/mbox" is the folder "Name".
+	if n := len(parts); stripExt && n >= 2 && strings.EqualFold(parts[n-1], "mbox") {
+		if base, ok := cutSuffixFold(parts[n-2], ".mbox"); ok && base != "" {
+			parts = parts[:n-1]
+		}
+	}
 	out := parts[:0]
 	for i, p := range parts {
 		if p == "" {
