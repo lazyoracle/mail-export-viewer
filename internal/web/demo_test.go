@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -274,5 +275,43 @@ func TestServeDemo(t *testing.T) {
 	t.Logf("serving the demo UI on http://%s/", l.Addr())
 	if err := srv.HTTPServer().Serve(l); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestBrowser runs browsertest/ui.mjs (headless Chromium over the DevTools
+// protocol, node built-ins only) against the demo archive. It only runs
+// when MEV_CHROME names a Chromium or chrome-headless-shell binary and
+// node is on PATH. Screenshots go to MEV_SHOTS, or a temporary directory.
+func TestBrowser(t *testing.T) {
+	chrome := os.Getenv("MEV_CHROME")
+	if chrome == "" {
+		t.Skip("set MEV_CHROME to a Chromium binary to run the browser check")
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH")
+	}
+	out := os.Getenv("MEV_SHOTS")
+	if out == "" {
+		out = t.TempDir()
+	}
+	dir := t.TempDir()
+	writeDemoCorpus(t, dir, 120)
+	srv, stop := demoServer(t, dir, false)
+	defer stop()
+	l, err := server.Listen("127.0.0.1:0", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hs := srv.HTTPServer()
+	go hs.Serve(l)
+	defer hs.Close()
+
+	cmd := exec.Command(node, filepath.Join("browsertest", "ui.mjs"))
+	cmd.Env = append(os.Environ(), "CHROME="+chrome, "BASE=http://"+l.Addr().String()+"/", "OUT="+out)
+	res, err := cmd.CombinedOutput()
+	t.Logf("%s", res)
+	if err != nil {
+		t.Fatalf("browser check failed: %v", err)
 	}
 }
