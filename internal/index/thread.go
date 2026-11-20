@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/lazyoracle/mail-export-viewer/internal/source"
 )
 
 const (
@@ -329,7 +331,9 @@ func (s *Store) Thread(id int64) ([]Row, error) {
 }
 
 // threadCounts fills counts[messageID] = size of that message's thread
-// (visible messages only) for the given items.
+// for the given items: its visible messages (Deleted ones hidden unless
+// Options.IncludeDeleted), plus the item itself when it is a hidden
+// Deleted message shown by is:deleted.
 func (s *Store) threadCounts(items []Row, counts map[int64]int) error {
 	tids := map[int64]bool{}
 	for _, m := range items {
@@ -367,7 +371,11 @@ func (s *Store) threadCounts(items []Row, counts map[int64]int) error {
 		return err
 	}
 	for _, m := range items {
-		if n, ok := size[m.ThreadID]; ok {
+		n := size[m.ThreadID]
+		if hide != "" && m.Flags.Has(source.Deleted) {
+			n++ // a deleted row shown (is:deleted) counts itself
+		}
+		if n > 0 {
 			counts[m.ID] = n
 		}
 	}

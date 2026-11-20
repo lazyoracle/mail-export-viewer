@@ -420,3 +420,21 @@ func TestInterruptedThreadingHeals(t *testing.T) {
 		t.Error("threads_dirty left set")
 	}
 }
+
+func TestThreadCountOfShownDeletedRow(t *testing.T) {
+	s := openStore(t)
+	a := addMsg(t, s, 1, "a", "", "", "q", t0)
+	b := addMsgFlags(t, s, 1, "b", "a", "a", "q", t0+day, source.Deleted)
+	if _, err := s.wdb.Exec(`UPDATE folders SET deleted = 1`); err != nil {
+		t.Fatal(err)
+	}
+	assignAll(t, s)
+	res, _ := s.Search(SearchParams{Q: "is:deleted"})
+	if len(res.Items) != 1 || res.ThreadCounts[b] != 2 {
+		t.Errorf("is:deleted counts = %v (items %d), want %d: 2 (itself + visible thread)", res.ThreadCounts, len(res.Items), b)
+	}
+	res, _ = s.Search(SearchParams{})
+	if res.ThreadCounts[a] != 1 {
+		t.Errorf("visible count = %v", res.ThreadCounts)
+	}
+}
