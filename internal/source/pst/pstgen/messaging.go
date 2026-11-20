@@ -39,6 +39,8 @@ type Message struct {
 	Recipients  []Recipient
 	Attachments []*Attachment
 	NID         uint32 // set by Bytes for top-level messages
+	// Corrupt replaces the message node's data with garbage.
+	Corrupt bool
 }
 
 // Recipient types.
@@ -60,6 +62,9 @@ type Attachment struct {
 	Props    []Prop
 	Data     []byte
 	Embedded *Message
+	// Size, when non-zero, is written as PidTagAttachSize instead of
+	// len(Data) (a large claimed size without large data).
+	Size int32
 }
 
 // Property IDs used by the writer.
@@ -184,6 +189,10 @@ func (b *fileBuilder) folder(nid, parent uint32, name string, children []Row, ms
 			}
 		}
 		rows = append(rows, Row{ID: m.NID, Props: props})
+		if m.Corrupt {
+			b.add(m.NID, nid, Built{Blocks: [][]byte{[]byte("this is not a heap-on-node")}})
+			continue
+		}
 		b.add(m.NID, nid, message(m))
 	}
 	b.add(base|nidTypeContents, 0, TC(contentsCols, rows))
@@ -235,10 +244,14 @@ func message(m *Message) Built {
 			} else {
 				ap = append(ap, Bin(PidAttachData, a.Data))
 			}
-			ap = append(ap, I32(PidAttachMethod, method), I32(PidAttachSize, int32(len(a.Data))), I32(PidRenderingPos, -1))
+			size := a.Size
+			if size == 0 {
+				size = int32(len(a.Data))
+			}
+			ap = append(ap, I32(PidAttachMethod, method), I32(PidAttachSize, size), I32(PidRenderingPos, -1))
 			pc := PC(ap, extra...)
 			subs = append(subs, Subnode{NID: anid, Blocks: pc.Blocks, Subnodes: pc.Subnodes})
-			row := []Prop{I32(PidAttachSize, int32(len(a.Data))), I32(PidAttachMethod, method), I32(PidRenderingPos, -1)}
+			row := []Prop{I32(PidAttachSize, size), I32(PidAttachMethod, method), I32(PidRenderingPos, -1)}
 			for _, p := range a.Props {
 				if p.ID == PidAttachFilename {
 					row = append(row, p)

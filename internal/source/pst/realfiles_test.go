@@ -6,7 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/lazyoracle/mail-export-viewer/internal/source"
 	"github.com/lazyoracle/mail-export-viewer/internal/source/pst/pstgen"
+	"github.com/lazyoracle/mail-export-viewer/internal/source/sourcetest"
 )
 
 // Third-party sample PSTs are never committed. Point PST_SAMPLES at a
@@ -92,6 +94,27 @@ func TestRealMessages(t *testing.T) {
 				withText, withHTML, withHeaders, withFrom, withDate, msgIDs, labelled, atts, attFails)
 			if fails > 0 || attFails > 0 {
 				t.Errorf("%d messages and %d attachments failed", fails, attFails)
+			}
+		})
+	}
+}
+
+// TestRealConformance runs the source contract check on each sample that
+// holds mail.
+func TestRealConformance(t *testing.T) {
+	for _, path := range samples(t) {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			src := openSource(t, path, filepath.Base(path))
+			es, warns := scan(t, src)
+			t.Logf("%d entries, %d folders, warnings %v", len(es), len(src.(source.FolderLister).Folders()), warns)
+			if len(es) == 0 {
+				t.Skip("no mail in this sample")
+			}
+			sourcetest.Check(t, src, source.Locator{ID: 0x7FFFFFE4}, source.Locator{ID: 0x21})
+			for _, e := range es[:min(len(es), 200)] {
+				if _, err := src.Raw(e.Loc); err != nil {
+					t.Errorf("Raw(%v): %v", e.Loc, err)
+				}
 			}
 		})
 	}
