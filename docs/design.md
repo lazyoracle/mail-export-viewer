@@ -15,7 +15,8 @@ folder reader) and adds the formats they lack. Nothing is ever written next to t
     (tags/keywords, read/starred/replied/forwarded flags; Thunderbird's old `$label1..5` labels are
     keywords and show as tags). Pointing at a `.msf` opens its mbox.
     Tag display names/colours come from the profile's `prefs.js` when it can be found.
-  - **pst** (Outlook Windows, Unicode PST/OST-style files; compressible-encryption supported) — pure Go reader.
+  - **pst** (Outlook Windows, Unicode and ANSI PST/OST-style files; the "compressible" and "high"
+    encodings, [MS-PST] permute and cyclic, are supported: neither needs a key) — pure Go reader.
   - **olm** (Outlook for Mac export, a zip of XML) — pure Go reader.
   - Loose `.eml` files in a directory are read as messages of their folder.
   - A directory may mix any of the above; everything shows in one folder tree, tagged with its source file.
@@ -39,8 +40,9 @@ folder reader) and adds the formats they lack. Nothing is ever written next to t
 
 ## Non-goals
 Sending/replying, editing/deleting, IMAP, auth/remote use, Windows, searching inside attachment contents,
-calendar/contacts/tasks (only mail items are shown; others are counted and skipped), encrypted-PST
-(high-security encryption) and password-protected archives.
+calendar/contacts/tasks (only mail items are shown; others are counted and skipped), PSTs with any
+other encryption method (e.g. Windows Information Protection; Outlook's "high" setting is the keyless
+cyclic encoding and *is* read) and password-protected archives.
 
 ## Anti-goals
 Anything phoning home; modifying input; one corrupt message/folder crashing or hanging the run;

@@ -18,9 +18,11 @@
 //
 // # Supported files
 //
-// Unicode (wVer 21-23) and ANSI (wVer 14/15) PSTs, unencoded or with
-// compressible (permute) or cyclic encoding. 4K-page OSTs (wVer 36) and
-// high-encryption files are refused by Open. CRCs and signatures are not
+// Unicode (wVer 21-23) and ANSI (wVer 14/15) PSTs with bCryptMethod 0
+// (none), 1 (compressible: permute) or 2 (cyclic, which is what Outlook's
+// "High" encryption setting writes); both are fixed obfuscations that need
+// no key. 4K-page OSTs (wVer 36) and any other bCryptMethod (e.g. 0x10,
+// Windows Information Protection) are refused by Open. CRCs and signatures are not
 // verified, but page trailers (type, BID) and block trailers (size, BID)
 // must match the B-tree entries, else that page or block fails. Data trees
 // may not hold more bytes than their declared total (lcbTotal), so a tree
