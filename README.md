@@ -701,9 +701,12 @@ an issue on GitHub. **Never attach real mail or real exports**, not even
     tab the first 512 KB, with a link to download the rest.
   - The conversation view shows at most 5,000 messages.
 - **Changed files are re-indexed whole.** A changed file is indexed again
-  from scratch, with no incremental append. In the rare case that an mbox is
-  rewritten so that the message boundaries land at exactly the same byte
-  offsets, the change is not detected until restart.
+  from scratch, with no incremental append. Changes are picked up at the
+  next start. While the viewer runs, a changed file is usually detected
+  when a message is opened ("stale"), but if an mbox is rewritten so that a
+  message boundary lands at exactly the same byte offsets, the viewer can
+  show the message that is now at that place instead of the indexed one,
+  until it is restarted.
 - **Slower searches on very large archives.** `filename:` searches and
   Chinese/Japanese/Korean substring searches scan the whole index: about
   0.15–0.25 s at 100,000 messages, growing linearly. Indexing runs at about

@@ -102,6 +102,10 @@ type Source interface {
 ```
 Index cache is keyed by input path+size+mtime per source file; changed files are re-indexed, stale locators
 are detected on read (offset validation / zip entry / node id) and reported, never mis-served.
+**Residual risk (accepted):** an mbox locator (offset+length) carries no identity of the message. If an
+mbox is rewritten *while the viewer runs* so that a separator line lands at the same offset and the next
+one at the same end, the other message at that range is served, until the next start re-indexes the file
+(its size/mtime fingerprint changed). Stated in internal/source/mbox/doc.go and the README limitations.
 
 ## Left to the builder
 Schema details, UI visual design, ranking, pagination mechanics, exact Mork/PST/OLM edge-case handling

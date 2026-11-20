@@ -21,10 +21,13 @@
 //   - Load, Raw and Attachment check that the locator still delimits a
 //     message: a separator line at Offset, and the range ending at the end
 //     of the file or right before another separator line; otherwise ErrStale.
-//     A short read is ErrStale too. The Locator carries no identity of the
-//     message, so a rewritten file that happens to have a separator at the
-//     same offset and the next one at the same end is not detected (residual
-//     risk, accepted: the index also re-scans when size/mtime change). Only
+//     A short read is ErrStale too. Residual risk (accepted, see
+//     docs/design.md): the Locator carries no identity of the message, so
+//     if the file is rewritten while the viewer runs and a separator lands
+//     at the same offset with the next one at the same end, the message
+//     now in that range is served in place of the indexed one (wrong
+//     content, not an error) until the next start re-indexes the file,
+//     whose size/mtime fingerprint changed. Only
 //     regular files are opened (stat before open, then fstat), so a FIFO
 //     cannot block.
 //     Files are opened per call, never held, so thousands of mbox files can
