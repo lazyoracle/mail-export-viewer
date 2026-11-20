@@ -304,7 +304,13 @@ func TestRunInProcess(t *testing.T) {
 	if code := <-done2; code != 0 {
 		t.Fatalf("exit %d", code)
 	}
-	db, _ := index.CachePath(cache, dir)
+	// The CLI names the cache after the symlink-resolved input (the temp
+	// directory is a symlink on macOS).
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, _ := index.CachePath(cache, real)
 	if _, err := os.Stat(db); err != nil {
 		t.Fatalf("index file not at CachePath: %v", err)
 	}

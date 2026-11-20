@@ -48,7 +48,7 @@ func TestPerf(t *testing.T) {
 	v := start(t, home, in)
 	indexTime := time.Since(t0)
 	peak := peakRSS(v.cmd.Process.Pid)
-	cache := dirSize(t, filepath.Join(home, "cache"))
+	cache := dirSize(t, filepath.Join(home, cacheRel()))
 	var st struct{ Indexing struct{ Messages int64 } }
 	v.getJSON("/api/status", &st)
 	t.Logf("machine: %s/%s, %d CPUs", runtime.GOOS, runtime.GOARCH, runtime.NumCPU())

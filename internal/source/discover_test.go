@@ -141,7 +141,7 @@ func TestDiscoverSingleFile(t *testing.T) {
 	defer os.Chdir(wd)
 	os.Chdir(dir)
 	d, err = source.Discover("All mail.mbox", source.Limits{})
-	if err != nil || len(d.Candidates) != 1 || d.Candidates[0].Path != mbox {
+	if err != nil || len(d.Candidates) != 1 || !samePath(d.Candidates[0].Path, mbox) {
 		t.Errorf("relative: %+v %v", d, err)
 	}
 }
@@ -304,4 +304,12 @@ func TestDiscoverConfinesSymlinksToRoot(t *testing.T) {
 	if d.Candidates[0].Path != filepath.Join(link, "dir", "other") {
 		t.Errorf("path = %q", d.Candidates[0].Path)
 	}
+}
+
+// samePath reports whether a and b name the same file once symlinks are
+// resolved (the temp directory is itself a symlink on macOS).
+func samePath(a, b string) bool {
+	ra, err1 := filepath.EvalSymlinks(a)
+	rb, err2 := filepath.EvalSymlinks(b)
+	return err1 == nil && err2 == nil && ra == rb
 }

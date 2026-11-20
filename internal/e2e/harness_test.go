@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -66,6 +67,7 @@ type viewer struct {
 	stderr *syncBuf
 	home   string // HOME, XDG_CACHE_HOME and TMPDIR live below it
 	done   chan error
+	exited atomic.Bool // set once cmd.Wait has returned
 }
 
 type syncBuf struct {
@@ -96,7 +98,8 @@ func start(t testing.TB, home, input string, args ...string) *viewer {
 	makeEnv(t, home)
 	all := append([]string{"-no-open", "-addr", "127.0.0.1:0"}, args...)
 	cmd := exec.Command(bin, append(all, input)...)
-	cmd.Env = []string{"HOME=" + filepath.Join(home, "home"), "XDG_CACHE_HOME=" + filepath.Join(home, "cache"),
+	cmd.Env = []string{"HOME=" + filepath.Join(home, "home"), "XDG_CACHE_HOME=" + filepath.Join(home, "cache"), // ignored on macOS, see cacheRel
+
 		"TMPDIR=" + filepath.Join(home, "tmp"), "PATH=/usr/bin:/bin", "LANG=C.UTF-8"}
 	pr, pw := io.Pipe()
 	v := &viewer{t: t, cmd: cmd, stderr: &syncBuf{}, home: home, done: make(chan error, 1)}
@@ -118,7 +121,7 @@ func start(t testing.TB, home, input string, args ...string) *viewer {
 			}
 		}
 	}()
-	go func() { v.done <- cmd.Wait(); pw.Close() }()
+	go func() { err := cmd.Wait(); v.exited.Store(true); v.done <- err; pw.Close() }()
 	t.Cleanup(func() { v.stop() })
 	select {
 	case v.base = <-found:
@@ -142,7 +145,7 @@ func makeEnv(t testing.TB, home string) {
 }
 
 func (v *viewer) stop() {
-	if v.cmd.ProcessState != nil {
+	if v.exited.Load() {
 		return
 	}
 	v.cmd.Process.Signal(os.Interrupt)
@@ -340,4 +343,27 @@ func diffTrees(a, b map[string]fileState) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// cacheRel is the cache directory of a viewer started by start, relative to
+// the base directory given to start. os.UserCacheDir honours XDG_CACHE_HOME
+// on Linux but is always $HOME/Library/Caches on macOS.
+func cacheRel() string {
+	if runtime.GOOS == "darwin" {
+		return filepath.Join("home", "Library", "Caches")
+	}
+	return "cache"
+}
+
+// isCacheEntry reports whether a tree-diff entry ("added x", "changed x (...)")
+// is the viewer's own cache directory, something below it, or one of the
+// directories leading to it that its creation necessarily touched.
+func isCacheEntry(entry string) bool {
+	rel := entry[strings.Index(entry, " ")+1:]
+	if i := strings.Index(rel, " ("); i >= 0 {
+		rel = rel[:i]
+	}
+	own := filepath.Join(cacheRel(), "mail-export-viewer")
+	sep := string(filepath.Separator)
+	return rel == own || strings.HasPrefix(rel, own+sep) || strings.HasPrefix(own, rel+sep)
 }

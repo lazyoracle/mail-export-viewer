@@ -40,9 +40,7 @@ func runCorpus(t *testing.T, sets []string, full bool) {
 	}
 	var outside []string
 	for _, e := range diffTrees(envBefore, treeState(t, home)) {
-		rel := e[strings.Index(e, " ")+1:]
-		if strings.HasPrefix(rel, filepath.Join("cache", "mail-export-viewer")+string(filepath.Separator)) ||
-			rel == filepath.Join("cache", "mail-export-viewer") || strings.HasPrefix(e, "changed cache ") {
+		if isCacheEntry(e) {
 			continue
 		}
 		outside = append(outside, e)
