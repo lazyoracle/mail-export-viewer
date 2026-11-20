@@ -3,7 +3,8 @@
 //   #/                     the message list
 //   #/m/<id>               the list with message <id> open
 //   #/stats                statistics
-// followed by ?q=&sort=&src=&fid=&folder=&deleted=1 for the list.
+// followed by ?q=&sort=&src=&fid=&folder=&deleted= for the list.
+// deleted is hide|include|only; absent means the server default.
 
 export const SORTS = [
   { id: 'newest', label: 'Newest first', api: 'date_desc' },
@@ -14,6 +15,8 @@ export const SORTS = [
 ];
 
 const SORT_IDS = new Set(SORTS.map((s) => s.id));
+
+export const DELETED_MODES = ['hide', 'include', 'only'];
 
 /** The API sort parameter for a UI sort name. */
 export function apiSort(id) {
@@ -28,7 +31,7 @@ function posInt(s) {
 }
 
 export const defaultRoute = () => ({
-  view: 'mail', message: null, q: '', sort: 'newest', source: null, folderId: null, folder: '', deleted: false,
+  view: 'mail', message: null, q: '', sort: 'newest', source: null, folderId: null, folder: '', deleted: '',
 });
 
 export function parseRoute(hash) {
@@ -53,7 +56,7 @@ export function parseRoute(hash) {
   r.source = posInt(p.get('src'));
   r.folderId = posInt(p.get('fid'));
   r.folder = p.get('folder') || '';
-  r.deleted = p.get('deleted') === '1';
+  r.deleted = DELETED_MODES.includes(p.get('deleted')) ? p.get('deleted') : '';
   if (r.view === 'stats') return { ...defaultRoute(), view: 'stats' };
   return r;
 }
@@ -67,7 +70,7 @@ export function formatRoute(route) {
   if (r.source) p.set('src', String(r.source));
   if (r.folderId) p.set('fid', String(r.folderId));
   if (r.folder) p.set('folder', r.folder);
-  if (r.deleted) p.set('deleted', '1');
+  if (r.deleted) p.set('deleted', r.deleted);
   const qs = p.toString();
   return `#/${r.message ? `m/${r.message}` : ''}${qs ? `?${qs}` : ''}`;
 }
@@ -76,7 +79,7 @@ export function formatRoute(route) {
 export function sameList(a, b) {
   return a.view === b.view && (a.q || '') === (b.q || '') && (a.sort || 'newest') === (b.sort || 'newest') &&
     (a.source || null) === (b.source || null) && (a.folderId || null) === (b.folderId || null) &&
-    (a.folder || '') === (b.folder || '') && Boolean(a.deleted) === Boolean(b.deleted);
+    (a.folder || '') === (b.folder || '') && (a.deleted || '') === (b.deleted || '');
 }
 
 export function sameRoute(a, b) {

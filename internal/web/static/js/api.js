@@ -31,10 +31,16 @@ export async function readJSON(res) {
 
 export const PAGE_SIZE = 100;
 
+const DELETED = new Set(['hide', 'include', 'only']);
+
+function withDeleted(path, deleted) {
+  return DELETED.has(deleted) ? `${path}?deleted=${deleted}` : path;
+}
+
 /**
  * URL of one page of the message list. Scope: source (source id), folderId
  * (one source's folder), folder (a tree path in every source), deleted
- * (true: only messages flagged deleted).
+ * (hide, include or only messages flagged deleted; '' is the server default).
  */
 export function messagesURL({ q, sort, cursor, source, folderId, folder, deleted, limit = PAGE_SIZE } = {}) {
   const p = new URLSearchParams();
@@ -42,7 +48,7 @@ export function messagesURL({ q, sort, cursor, source, folderId, folder, deleted
   if (source) p.set('source', String(source));
   if (folderId) p.set('folderId', String(folderId));
   if (folder) p.set('folder', folder);
-  if (deleted) p.set('deleted', 'only');
+  if (DELETED.has(deleted)) p.set('deleted', deleted);
   if (q) p.set('q', q);
   if (sort) p.set('sort', sort);
   if (cursor) p.set('cursor', cursor);
@@ -103,11 +109,12 @@ const rawURL = (n) => `/api/messages/${id(n)}/raw`;
 
 export const api = {
   status: (signal) => getJSON('/api/status', signal),
-  facets: (signal) => getJSON('/api/facets', signal),
+  /** deleted: as for messages; facets know no 'only', so it counts as include. */
+  facets: ({ deleted } = {}, signal) => getJSON(withDeleted('/api/facets', deleted === 'only' ? 'include' : deleted), signal),
   stats: (signal) => getJSON('/api/stats', signal),
   messages: (params, signal) => getJSON(messagesURL(params), signal),
   message: (n, signal) => getJSON(`/api/messages/${id(n)}`, signal),
-  thread: (n, signal) => getJSON(`/api/threads/${id(n)}`, signal),
+  thread: (n, { deleted } = {}, signal) => getJSON(withDeleted(`/api/threads/${id(n)}`, deleted), signal),
   rawURL,
   /** The original message as text, capped at max bytes for display. */
   raw: async (n, signal, max = RAW_DISPLAY_MAX) => {

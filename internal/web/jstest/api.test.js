@@ -59,9 +59,10 @@ test('messagesURL builds the API query with every scope parameter', () => {
   assert.equal(messagesURL({ limit: 50 }), '/api/messages?limit=50');
   assert.equal(messagesURL({ q: 'from:ann x', sort: 'date_asc', cursor: 'a+b/=' }),
     '/api/messages?limit=100&q=from%3Aann+x&sort=date_asc&cursor=a%2Bb%2F%3D');
-  assert.equal(messagesURL({ source: 3, folderId: 7, folder: 'Mail/In box', deleted: true }),
+  assert.equal(messagesURL({ source: 3, folderId: 7, folder: 'Mail/In box', deleted: 'only' }),
     '/api/messages?limit=100&source=3&folderId=7&folder=Mail%2FIn+box&deleted=only');
-  assert.equal(messagesURL({ source: null, folderId: 0, folder: '', deleted: false, sort: '' }), '/api/messages?limit=100');
+  assert.equal(messagesURL({ deleted: 'bogus' }), '/api/messages?limit=100', 'only the documented modes');
+  assert.equal(messagesURL({ source: null, folderId: 0, folder: '', deleted: '', sort: '' }), '/api/messages?limit=100');
 });
 
 test('api endpoints hit the documented paths', async (t) => {
@@ -73,7 +74,11 @@ test('api endpoints hit the documented paths', async (t) => {
   await api.message(12);
   await api.thread(12);
   await api.messages({ q: 'x' });
-  assert.deepEqual(urls, ['/api/status', '/api/facets', '/api/stats', '/api/messages/12', '/api/threads/12', '/api/messages?limit=100&q=x']);
+  await api.facets({ deleted: 'only' });
+  await api.facets({ deleted: 'hide' });
+  await api.thread(12, { deleted: 'include' });
+  assert.deepEqual(urls, ['/api/status', '/api/facets', '/api/stats', '/api/messages/12', '/api/threads/12', '/api/messages?limit=100&q=x',
+    '/api/facets?deleted=include', '/api/facets?deleted=hide', '/api/threads/12?deleted=include']);
   assert.equal(api.rawURL(12), '/api/messages/12/raw');
 });
 
