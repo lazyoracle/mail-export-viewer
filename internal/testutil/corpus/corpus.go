@@ -145,6 +145,9 @@ type Manifest struct {
 	// LongThreadLen its length.
 	LongThread    string
 	LongThreadLen int
+	// CommonWord is the most frequent body word (in roughly a quarter of
+	// bulk messages).
+	CommonWord string
 	// ManyLabels is the number of distinct labels of the many-labels case.
 	ManyLabels int
 	Bytes      int64
@@ -182,6 +185,7 @@ func Generate(dir string, o Options) (*Manifest, error) {
 		clock: time.Date(2012, 1, 2, 9, 0, 0, 0, time.UTC),
 	}
 	g.vocab = vocabulary(g.r)
+	g.m.CommonWord = g.vocab[0]
 	sets := o.Sets
 	if len(sets) == 0 {
 		sets = append([]string(nil), AllSets...)
