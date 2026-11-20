@@ -3,6 +3,7 @@ package mail
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -155,5 +156,28 @@ func TestWriteEMLDataError(t *testing.T) {
 	}
 	if err := WriteEML(&bytes.Buffer{}, m, nil); err == nil {
 		t.Error("nil data with attachments: want error")
+	}
+}
+
+func TestWriteEMLFoldsLongPreservedFields(t *testing.T) {
+	var refs []string
+	for i := 0; i < 200; i++ {
+		refs = append(refs, fmt.Sprintf("<ref%03d@example.com>", i))
+	}
+	long := strings.Join(refs, " ")
+	token := strings.Repeat("x", 1200) // no whitespace: cannot be folded
+	in := &Message{Header: Header{{"References", long}, {"X-Token", token}}, Text: "t"}
+	raw := writeEML(t, in, nil)
+	for _, line := range strings.Split(string(raw), "\r\n") {
+		if len(line) > 998 && !strings.HasPrefix(line, "X-Token: ") {
+			t.Errorf("line of %d bytes: %.40q", len(line), line)
+		}
+	}
+	h := ParseHeader(raw)
+	if h.Get("References") != long || h.Get("X-Token") != token {
+		t.Errorf("unfolded values differ")
+	}
+	if got := Parse(raw, time.Time{}).References; len(got) != 200 {
+		t.Errorf("References = %d", len(got))
 	}
 }

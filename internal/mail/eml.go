@@ -126,10 +126,29 @@ func oneLine(s string) string {
 	}, s))
 }
 
+// maxLine is RFC 5322's hard line length limit, without CRLF.
+const maxLine = 998
+
+// writeField writes "name: value", folding at spaces so that no line
+// exceeds maxLine. A run without spaces longer than that cannot be folded
+// without changing the value and is written as is.
 func writeField(bw *bufio.Writer, name, value string) {
-	bw.WriteString(name)
-	bw.WriteString(": ")
-	bw.WriteString(value)
+	line := name + ": " + value
+	for len(line) > maxLine {
+		cut := strings.LastIndexByte(line[:maxLine+1], ' ')
+		if cut <= len(name)+1 {
+			// No space within the limit: break at the next one, if any.
+			next := strings.IndexByte(line[maxLine:], ' ')
+			if next < 0 {
+				break
+			}
+			cut = maxLine + next
+		}
+		bw.WriteString(line[:cut])
+		bw.WriteString("\r\n")
+		line = line[cut:] // continuation starts with the space
+	}
+	bw.WriteString(line)
 	bw.WriteString("\r\n")
 }
 
