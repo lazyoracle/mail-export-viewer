@@ -64,7 +64,9 @@ type Discovery struct {
 // A file is sniffed and must match a registered format (else an error
 // wrapping ErrUnknownFormat); a Thunderbird summary (Mork, "X.msf") stands
 // for its mbox "X". A directory is walked recursively in name order,
-// following symlinks but never entering a directory twice (so loops end)
+// following symlinks whose targets resolve under the root (others are
+// skipped with a warning; the root itself may be a symlink), never
+// entering a directory twice (so loops end; the first path visited wins)
 // and reporting each real file once. Hidden entries (".name"), Mork
 // sidecars, special files (FIFOs, devices: never opened) and files no
 // format claims are skipped silently; unreadable entries and the limits are
@@ -88,7 +90,11 @@ func Discover(path string, lim Limits) (*Discovery, error) {
 	if !fi.IsDir() {
 		return discoverFile(abs, fs)
 	}
-	w := &walker{lim: lim, fs: fs, seenDirs: map[string]bool{}, seenFiles: map[string]bool{}, d: &Discovery{Root: abs}}
+	realRoot, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return nil, err
+	}
+	w := &walker{lim: lim, fs: fs, realRoot: realRoot, seenDirs: map[string]bool{}, seenFiles: map[string]bool{}, d: &Discovery{Root: abs}}
 	if err := w.walk(abs, nil, 0); err != nil {
 		return nil, err
 	}
@@ -143,6 +149,7 @@ func discoverFile(abs string, fs []Format) (*Discovery, error) {
 type walker struct {
 	lim                 Limits
 	fs                  []Format
+	realRoot            string // the root with symlinks resolved
 	seenDirs, seenFiles map[string]bool
 	entries             int
 	stopped             bool
@@ -184,6 +191,16 @@ func (w *walker) walk(dir string, rel []string, depth int) error {
 			continue
 		}
 		p := filepath.Join(dir, name)
+		if e.Type()&os.ModeSymlink != 0 {
+			target, err := filepath.EvalSymlinks(p)
+			if err != nil {
+				continue // dangling
+			}
+			if !within(w.realRoot, target) {
+				w.warn("skipping symlink %s: it points outside %s", p, w.d.Root)
+				continue
+			}
+		}
 		fi, err := os.Stat(p) // follows symlinks
 		if err != nil {
 			continue // dangling symlink, permission problem, ...
@@ -225,6 +242,12 @@ func (w *walker) walk(dir string, rel []string, depth int) error {
 		w.d.Candidates = append(w.d.Candidates, Candidate{Format: name, Path: dir, Files: files, Rel: relName(rel)})
 	}
 	return nil
+}
+
+// within reports whether path is root or below it (both resolved).
+func within(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func relName(parts []string) string { return displayName(strings.Join(parts, "/")) }
