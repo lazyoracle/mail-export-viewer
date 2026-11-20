@@ -223,6 +223,13 @@ func openDB(dbPath string) (*Store, error) {
 	if err := openPrivate(dbPath, true); err != nil {
 		return nil, err
 	}
+	// SQLite opens (and would follow) existing -wal/-shm files: refuse a
+	// symlink or special file there too; private-ise leftovers.
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if err := openPrivate(dbPath+suffix, false); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+	}
 	wdb, err := sql.Open("sqlite", dsn(dbPath,
 		"busy_timeout(10000)", "journal_mode(WAL)", "synchronous(NORMAL)", "cache_size(-32000)"))
 	if err != nil {
@@ -246,7 +253,7 @@ func openDB(dbPath string) (*Store, error) {
 		return nil, err
 	}
 	for _, suffix := range []string{"-wal", "-shm"} {
-		openPrivate(dbPath+suffix, false) // best effort: they may not exist yet
+		openPrivate(dbPath+suffix, false) // created by SQLite just now: 0600
 	}
 	return &Store{wdb: wdb, rdb: rdb}, nil
 }

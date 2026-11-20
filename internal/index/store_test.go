@@ -171,3 +171,29 @@ func TestResetForgetsEverything(t *testing.T) {
 		t.Errorf("total = %d", r.Total)
 	}
 }
+
+func TestOpenRefusesSymlinkedWALAndSHM(t *testing.T) {
+	for _, suffix := range []string{"-wal", "-shm"} {
+		dir := t.TempDir()
+		target := filepath.Join(dir, "target")
+		if err := os.WriteFile(target, []byte("keep"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		db := filepath.Join(dir, "index.db")
+		if err := os.Symlink(target, db+suffix); err != nil {
+			t.Fatal(err)
+		}
+		if s, err := Open(db, Options{}); !errors.Is(err, ErrNotRegular) {
+			if s != nil {
+				s.Close()
+			}
+			t.Fatalf("%s symlink: Open = %v, want ErrNotRegular", suffix, err)
+		}
+		if b, _ := os.ReadFile(target); string(b) != "keep" {
+			t.Errorf("%s symlink target written: %q", suffix, b)
+		}
+		if fi, _ := os.Stat(target); fi.Mode().Perm() != 0o644 {
+			t.Errorf("%s symlink target chmod-ed", suffix)
+		}
+	}
+}
