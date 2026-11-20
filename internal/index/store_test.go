@@ -1,6 +1,7 @@
 package index
 
 import (
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -241,5 +242,25 @@ func TestOpenCreatesPrivateCacheDir(t *testing.T) {
 	}
 	if m := fi.Mode().Perm(); m != 0o700 {
 		t.Errorf("cache dir mode = %o, want 700", m)
+	}
+}
+
+// SQLite's temporary files (sorts, FTS merges, VACUUM) hold index data:
+// they go to the private cache directory, never to TMPDIR (issue #16).
+func TestTempFilesInCacheDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "it's cache")
+	s, err := Open(filepath.Join(dir, "index.db"), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for name, db := range map[string]*sql.DB{"writer": s.wdb, "reader": s.rdb} {
+		var got string
+		if err := db.QueryRow(`PRAGMA temp_store_directory`).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got != dir {
+			t.Errorf("%s temp_store_directory = %q, want %q", name, got, dir)
+		}
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 
 	_ "modernc.org/sqlite" // registers the "sqlite" driver (pure Go, FTS5 built in)
@@ -243,8 +244,11 @@ func openDB(dbPath string) (*Store, error) {
 			return nil, err
 		}
 	}
+	// SQLite's temporary files (sorts, FTS merges, VACUUM) hold index
+	// data: keep them in the private cache directory instead of TMPDIR.
+	tmp := "temp_store_directory('" + strings.ReplaceAll(filepath.Dir(dbPath), "'", "''") + "')"
 	wdb, err := sql.Open("sqlite", dsn(dbPath,
-		"busy_timeout(10000)", "journal_mode(WAL)", "synchronous(NORMAL)", "cache_size(-32000)"))
+		"busy_timeout(10000)", "journal_mode(WAL)", "synchronous(NORMAL)", "cache_size(-32000)", tmp))
 	if err != nil {
 		return nil, err
 	}
@@ -254,7 +258,7 @@ func openDB(dbPath string) (*Store, error) {
 		wdb.Close()
 		return nil, fmt.Errorf("index: open %s: %w", dbPath, err)
 	}
-	rdb, err := sql.Open("sqlite", dsn(dbPath, "busy_timeout(10000)", "query_only(1)", "cache_size(-16000)"))
+	rdb, err := sql.Open("sqlite", dsn(dbPath, "busy_timeout(10000)", "query_only(1)", "cache_size(-16000)", tmp))
 	if err != nil {
 		wdb.Close()
 		return nil, err

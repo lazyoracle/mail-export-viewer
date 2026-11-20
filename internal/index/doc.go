@@ -141,7 +141,9 @@
 // Open creates a missing cache directory 0700. The database, its
 // -wal/-shm (checked before SQLite opens them) and the "<db>.lock" file
 // are created 0600 and opened with O_NOFOLLOW (a symlink is refused:
-// ErrNotRegular). Reset drops everything, vacuums and truncates the WAL,
+// ErrNotRegular). SQLite's temporary files (sorts, FTS merges, VACUUM)
+// are put in the cache directory too (PRAGMA temp_store_directory), never
+// in TMPDIR. Reset drops everything, vacuums and truncates the WAL,
 // so no indexed text stays on disk. The
 // lock is an exclusive flock held until Close (released by the kernel if
 // the process dies). A database SQLite reports corrupt or not-a-database
