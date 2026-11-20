@@ -16,6 +16,7 @@ coverage.*
 
 # Test scratch (real mail must never be committed)
 /tmp/
+/tests/tmp/
 /scratch/
 *.mbox
 *.pst
