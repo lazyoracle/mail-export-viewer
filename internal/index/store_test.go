@@ -152,3 +152,22 @@ func TestCachePath(t *testing.T) {
 		t.Errorf("CachePath leaks the input path: %q", a)
 	}
 }
+
+func TestResetForgetsEverything(t *testing.T) {
+	s := openStore(t)
+	a := newFake(t, "mbox", "a", rawEntry("A", 1, "one"))
+	index(t, s, a)
+	if err := s.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	if srcs, _ := s.Sources(); len(srcs) != 0 {
+		t.Fatalf("sources after Reset = %+v", srcs)
+	}
+	index(t, s, a)
+	if a.scans.Load() != 2 {
+		t.Errorf("scans = %d, want a full re-scan after Reset", a.scans.Load())
+	}
+	if r := search(t, s, SearchParams{Q: "one"}); r.Total != 1 {
+		t.Errorf("total = %d", r.Total)
+	}
+}

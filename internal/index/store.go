@@ -288,7 +288,26 @@ func wipe(dbPath string) error {
 	return nil
 }
 
-// Close closes the store and releases its lock.
+// Reset forgets everything indexed (for a forced re-index), keeping the
+// database file and the lock. It must not run concurrently with
+// IndexSources.
+func (s *Store) Reset() error {
+	for _, t := range allTables {
+		if _, err := s.wdb.Exec(`DROP TABLE IF EXISTS ` + t); err != nil {
+			return err
+		}
+	}
+	if _, err := s.wdb.Exec(schemaSQL); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.status = Progress{}
+	s.mu.Unlock()
+	return nil
+}
+
+// Close closes the store and releases its lock. It must not be called
+// while IndexSources runs (cancel its context and wait for it first).
 func (s *Store) Close() error {
 	err := errors.Join(s.rdb.Close(), s.wdb.Close())
 	s.lock.release()
