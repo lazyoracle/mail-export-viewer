@@ -640,8 +640,15 @@ func (w *writer) write(batch []row) (err error) {
 	// Explicit ids (single writer) let every table be filled with
 	// multi-row INSERTs: the driver parses each statement on every Exec, so
 	// one statement per row would dominate the cost.
+	// Ids are never reused (meta next_id survives deletions and Reset), so
+	// a stale link to a removed message is "not found", not another one.
 	var nextID int64
-	if err := tx.QueryRow(`SELECT COALESCE(MAX(id), 0) + 1 FROM messages`).Scan(&nextID); err != nil {
+	if err := tx.QueryRow(`SELECT MAX(COALESCE((SELECT value FROM meta WHERE key = 'next_id'), 1),
+		COALESCE(MAX(id), 0) + 1) FROM messages`).Scan(&nextID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO meta(key, value) VALUES('next_id', ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, nextID+int64(len(batch))); err != nil {
 		return err
 	}
 	msgs := multiInsert{tx: tx, head: `INSERT INTO messages(id, source_id, folder_id, loc, message_id, in_reply_to,

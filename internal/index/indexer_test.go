@@ -611,3 +611,27 @@ func TestConcurrentRunsAreRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestMessageIDsNeverReused(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "i.db")
+	s := openAt(t, db, Options{})
+	a := newFake(t, source.Mbox, "a", rawEntry("A", 1, "one"), rawEntry("A", 2, "two"))
+	index(t, s, a)
+	var maxOld int64
+	for _, r := range allRows(t, s) {
+		maxOld = max(maxOld, r.ID)
+	}
+	b := newFake(t, source.Mbox, "b", rawEntry("B", 3, "three"))
+	index(t, s, b) // a removed first, then b written
+	touch(t, b.path)
+	index(t, s, b) // b re-indexed: its new ids are new too
+	rows := allRows(t, s)
+	if len(rows) != 1 || rows[0].ID <= maxOld+1 {
+		t.Fatalf("rows = %+v, want an id above %d", rows, maxOld+1)
+	}
+	for id := int64(1); id <= maxOld+1; id++ {
+		if _, err := s.Message(id); !errors.Is(err, ErrNotFound) {
+			t.Errorf("old id %d resolves: %v", id, err)
+		}
+	}
+}

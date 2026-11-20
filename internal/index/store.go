@@ -315,12 +315,19 @@ func (s *Store) Reset() error {
 		return ErrBusy
 	}
 	defer s.runMu.Unlock()
+	var nextID int64 // kept, so ids stay unique across a Reset
+	if err := s.wdb.QueryRow(`SELECT COALESCE((SELECT value FROM meta WHERE key = 'next_id'), 0)`).Scan(&nextID); err != nil {
+		return err
+	}
 	for _, t := range allTables {
 		if _, err := s.wdb.Exec(`DROP TABLE IF EXISTS ` + t); err != nil {
 			return err
 		}
 	}
 	if _, err := s.wdb.Exec(schemaSQL); err != nil {
+		return err
+	}
+	if _, err := s.wdb.Exec(`INSERT INTO meta(key, value) VALUES('next_id', ?)`, nextID); err != nil {
 		return err
 	}
 	s.mu.Lock()

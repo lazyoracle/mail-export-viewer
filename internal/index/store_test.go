@@ -197,3 +197,17 @@ func TestOpenRefusesSymlinkedWALAndSHM(t *testing.T) {
 		}
 	}
 }
+
+func TestResetKeepsIDsUnique(t *testing.T) {
+	s := openStore(t)
+	a := newFake(t, "mbox", "a", rawEntry("A", 1, "one"))
+	index(t, s, a)
+	old := allRows(t, s)[0].ID
+	if err := s.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	index(t, s, a)
+	if id := allRows(t, s)[0].ID; id <= old {
+		t.Errorf("id after Reset = %d, want > %d", id, old)
+	}
+}
