@@ -67,6 +67,8 @@ test('progressInfo: idle, running with byte progress, indeterminate', () => {
   assert.equal(unknown.fraction, null, 'no total: indeterminate');
   assert.equal(progressInfo({ indexing: { running: true }, sources: [src({ state: 'indexing', done: 200, total: 100 })] }).fraction, 1);
   assert.equal(progressInfo({ indexing: { running: false, error: 'disk full' }, sources: [] }).error, 'disk full');
+  const lag = progressInfo({ indexing: { running: true, messages: 0 }, sources: [src({ state: 'indexing', messages: 1800, done: 3, total: 10 }), src({ state: 'done', messages: 200 })] });
+  assert.equal(lag.messages, 2000, 'per-source counts when the run total lags');
 });
 
 test('shouldRefresh: when message count grows or a run ends', () => {

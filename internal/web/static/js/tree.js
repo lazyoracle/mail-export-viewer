@@ -3,7 +3,7 @@
 // sourceTrees() cuts it into one tree per source with that source's counts.
 
 import { h, icon } from './dom.js';
-import { plural } from './format.js';
+import { plural, compactCount } from './format.js';
 
 const KIND_LABELS = { mbox: 'mbox', eml: 'EML', olm: 'OLM', pst: 'PST' };
 
@@ -29,6 +29,14 @@ function prune(nodes, sourceId) {
     });
   }
   return out;
+}
+
+/**
+ * A short sidebar label for a source path: its last two segments, with
+ * Thunderbird's ".sbd" directory suffix dropped. The full name is the title.
+ */
+export function sourceLabel(name) {
+  return String(name || '').split('/').slice(-2).map((p, i, a) => (i < a.length - 1 ? p.replace(/\.sbd$/i, '') : p)).join('/');
 }
 
 const baseName = (s) => String(s || '').split('/').pop().replace(/\.[^.]*$/, '').toLowerCase();
@@ -77,8 +85,8 @@ export function scopeOrder(trees, collapsed) {
 
 function counts(count, unread) {
   return [
-    unread ? h('span', { class: 'side-unread', text: unread.toLocaleString(), attrs: { 'aria-label': `${unread.toLocaleString()} unread` } }) : null,
-    h('span', { class: 'side-count', text: count.toLocaleString(), attrs: { 'aria-label': plural(count, 'message') } }),
+    unread ? h('span', { class: 'side-unread', text: compactCount(unread), attrs: { 'aria-label': `${unread.toLocaleString()} unread` } }) : null,
+    h('span', { class: 'side-count', text: compactCount(count), attrs: { 'aria-label': plural(count, 'message') } }),
   ];
 }
 
@@ -132,7 +140,7 @@ export function renderSourceTrees(container, trees, opts) {
           attrs: { 'aria-current': current ? 'page' : null },
         },
         h('span', { class: `kind-badge kind-${source.kind}`, text: kindLabel(source.kind) }),
-        h('span', { class: 'source-name', text: source.name }),
+        h('span', { class: 'source-name', text: sourceLabel(source.name) }),
         counts(source.count, source.unread))),
       nodes.length ? h('ul', { class: 'nodes', hidden: !open, attrs: { 'aria-label': `Folders in ${source.name}` } },
         nodes.map((n) => nodeItem(n, o, 1))) : null);

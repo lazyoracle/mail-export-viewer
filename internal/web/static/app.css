@@ -431,6 +431,7 @@ mark { background: var(--mark); color: var(--mark-ink); border-radius: 2px; padd
 .list-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .message-list { outline: none; }
 .message-list:focus-visible { box-shadow: inset 0 0 0 2px var(--focus); }
+.message-list:focus-visible:has(.row.is-active) { box-shadow: none; }
 
 .row {
   position: relative;

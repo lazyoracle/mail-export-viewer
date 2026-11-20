@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { installFakeDOM } from './fakedom.js';
 
 installFakeDOM();
-const { sourceTrees, scopeOrder, renderSourceTrees, kindLabel } = await import('../static/js/tree.js');
+const { sourceTrees, scopeOrder, renderSourceTrees, kindLabel, sourceLabel } = await import('../static/js/tree.js');
 const { FLAGS, flagQuery, flagMarks } = await import('../static/js/flags.js');
 
 const ref = (folderId, sourceId, count = 1, unread = 0) => ({ folderId, sourceId, sourceKind: 'x', source: 's', count, unread });
@@ -108,4 +108,11 @@ test('flagMarks: an icon and a spoken name per flag; unread is shown by the row 
   assert.equal(m.querySelector('.visually-hidden').textContent, 'Starred');
   assert.equal(flagMarks(['unread']), null);
   assert.equal(flagMarks([]), null);
+});
+
+test('sourceLabel keeps the end of a long source path', () => {
+  assert.equal(sourceLabel('Mail'), 'Mail');
+  assert.equal(sourceLabel('Thunderbird/Inbox'), 'Thunderbird/Inbox');
+  assert.equal(sourceLabel('Profile/Mail/Local Folders/Archives.sbd/2021'), 'Archives/2021');
+  assert.equal(sourceLabel('a/b/backup.olm'), 'b/backup.olm');
 });

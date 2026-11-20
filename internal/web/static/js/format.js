@@ -155,3 +155,10 @@ export function isoLocal(iso, timeZone) {
   const a = Math.abs(off);
   return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}${sign}${pad(Math.floor(a / 60))}:${pad(a % 60)}`;
 }
+
+const COMPACT = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 });
+
+/** A short count for tight places ("1.2K", "40K"); exact below 1,000. */
+export function compactCount(n) {
+  return n < 1000 ? String(n) : COMPACT.format(n);
+}

@@ -1,6 +1,3 @@
-// Package web embeds the browser UI: a single page of vanilla ES modules
-// with no build step and no external resources, served by internal/server
-// (Config.UI) under its Content-Security-Policy. See doc.go.
 package web
 
 import (

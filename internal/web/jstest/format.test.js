@@ -133,3 +133,13 @@ test('isoLocal: full ISO 8601 in the viewer time zone', () => {
   assert.equal(isoLocal('2026-07-01T00:00:00Z', 'America/New_York'), '2026-06-30T20:00:00-04:00');
   assert.equal(isoLocal('', 'UTC'), '');
 });
+
+import { compactCount } from '../static/js/format.js';
+
+test('compactCount shortens large sidebar counts', () => {
+  assert.equal(compactCount(0), '0');
+  assert.equal(compactCount(999), '999');
+  assert.equal(compactCount(1234), '1.2K');
+  assert.equal(compactCount(40005), '40K');
+  assert.equal(compactCount(1250000), '1.3M');
+});

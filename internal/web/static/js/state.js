@@ -73,7 +73,8 @@ export function progressInfo(s) {
   return {
     active,
     fraction,
-    messages: ix.messages || 0,
+    // The run total can lag behind the per-source counts while a source is read.
+    messages: Math.max(ix.messages || 0, sources.reduce((n, x) => n + (x.messages || 0), 0)),
     warnings: ix.warnings || 0,
     current: active && reading ? reading.name : '',
     error: ix.error || '',

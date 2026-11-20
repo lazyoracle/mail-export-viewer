@@ -3,7 +3,7 @@
 // (textContent, title, data-*); nothing parses HTML.
 
 import { h } from './dom.js';
-import { avatarHue, plural } from './format.js';
+import { avatarHue, plural, compactCount } from './format.js';
 
 // Labels Gmail itself sets (Takeout spells them like this). They are shown
 // like any other label, only quieter and after the user's own.
@@ -100,8 +100,8 @@ function sideTerm(kind, t, active) {
   },
   h('span', { class: 'side-dot', attrs: { 'aria-hidden': 'true' } }),
   h('span', { class: 'side-name', text: t.name }),
-  t.unread ? h('span', { class: 'side-unread', text: t.unread.toLocaleString(), attrs: { 'aria-label': `${t.unread.toLocaleString()} unread` } }) : null,
-  h('span', { class: 'side-count', text: t.count.toLocaleString(), attrs: { 'aria-label': plural(t.count, 'message') } }));
+  t.unread ? h('span', { class: 'side-unread', text: compactCount(t.unread), attrs: { 'aria-label': `${t.unread.toLocaleString()} unread` } }) : null,
+  h('span', { class: 'side-count', text: compactCount(t.count), attrs: { 'aria-label': plural(t.count, 'message') } }));
   if (kind === 'label' && isSystemLabel(t.name)) b.classList.add('is-system');
   return h('li', {}, tint(b, t));
 }

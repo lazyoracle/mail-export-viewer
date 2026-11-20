@@ -4,8 +4,8 @@
 // statistics view, keyboard shortcuts and the indexing banner.
 
 import { api, PAGE_SIZE } from './api.js';
-import { h, icon, clear, $ } from './dom.js';
-import { plural } from './format.js';
+import { h, icon, clear, append, $ } from './dom.js';
+import { plural, compactCount } from './format.js';
 import {
   emptyList, startLoading, applyPage, failPage, clampIndex, progressInfo, shouldRefresh, countText, sourceWarnings,
 } from './state.js';
@@ -299,8 +299,9 @@ function renderSidebar() {
       title: info.name === 'deleted' ? 'Show only messages flagged deleted' : `Add ${flagQuery(info.name).join(':')} to the search`,
       attrs: { 'aria-pressed': String(pressed) },
     }, icon(info.icon), h('span', { class: 'side-name', text: info.label }),
-    h('span', { class: 'side-count', text: n.toLocaleString(), attrs: { 'aria-label': plural(n, 'message') } })));
+    h('span', { class: 'side-count', text: compactCount(n), attrs: { 'aria-label': plural(n, 'message') } })));
   }).filter(Boolean));
+  el.flagList.closest('section').hidden = !el.flagList.children.length;
 
   renderSourceTrees(el.sourceTree, state.trees, {
     current: r.view === 'mail' ? { source: r.source, folderId: r.folderId } : {},
@@ -663,10 +664,10 @@ function renderListStatus() {
     if (queryChips(r.q).length) tips.push(suggestion('Remove the filters', () => editQuery(queryChips(r.q).reduceRight((q, c) => removeToken(q, c.index), r.q))));
     if (r.q) tips.push(suggestion('Clear the search', () => editQuery('')));
     if (r.deleted === 'only') tips.push(suggestion('Show messages that are not deleted', () => navigate({ ...r, deleted: '', message: null })));
-    s.append(icon('search', 'icon empty-mark'),
+    append(s, [icon('search', 'icon empty-mark'),
       h('p', { class: 'empty-title', text: r.q ? 'No messages match this search.' : 'No deleted messages here.' }),
       r.q ? h('p', { class: 'empty-tip', text: 'Check the spelling or use fewer words. A word shorter than 3 letters only matches whole words. after: includes its date; before: does not.' }) : null,
-      h('ul', { class: 'suggestions' }, tips));
+      h('ul', { class: 'suggestions' }, tips)]);
   } else if (!l.items.length) {
     const indexing = state.status && state.status.indexing && state.status.indexing.running;
     s.classList.add('is-empty');
@@ -1139,7 +1140,7 @@ function renderStatusDialog() {
   const summary = p.active
     ? `Indexing: ${p.finished} of ${plural(p.sources, 'source')} done, ${plural(p.messages, 'message')} read so far.`
     : `${plural(s.sources.reduce((n, x) => n + (x.count || 0), 0), 'message')} indexed from ${plural(s.sources.length, 'source')}.`;
-  clear(el.statusBody).append(
+  append(clear(el.statusBody), [
     h('p', { class: 'status-summary', text: summary }),
     p.error ? h('p', { class: 'status-error', text: `Indexing stopped: ${p.error}` }) : null,
     h('p', { class: 'muted', text: `Version ${s.version || 'unknown'}. Deleted messages are ${s.includeDeleted ? 'shown' : 'hidden'} by default.` }),
@@ -1159,7 +1160,7 @@ function renderStatusDialog() {
         w && w.warnings.length ? h('ul', { class: 'status-warnings', attrs: { 'aria-label': `Warnings for ${x.name}` } },
           w.warnings.map((t) => h('li', { text: t }))) : null,
         w && w.more ? h('p', { class: 'status-more', text: `${plural(w.more, 'more warning')} not listed.` }) : null);
-    })));
+    }))]);
 }
 
 function openStatus() {
