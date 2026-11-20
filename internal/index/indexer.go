@@ -35,13 +35,6 @@ const (
 	maxWarningBytes   = 1000
 )
 
-// TagStyler is optionally implemented by sources that know the colours of
-// their tags (Thunderbird, from prefs.js). The index calls it after Scan
-// and keeps the colours with the tags (Tag.Color, TagCount.Color).
-type TagStyler interface {
-	TagStyles() []source.TagStyle
-}
-
 type sourceState struct {
 	id           int64
 	kind, fprint string
@@ -237,6 +230,7 @@ func deleteSourceRows(tx *sql.Tx, id int64) error {
 		`DELETE FROM props WHERE message_id IN (SELECT id FROM messages WHERE source_id = ?)`,
 		`DELETE FROM messages WHERE source_id = ?`,
 		`DELETE FROM folders WHERE source_id = ?`,
+		`DELETE FROM tag_colors WHERE source_id = ?`,
 	} {
 		if _, err := tx.Exec(q, id); err != nil {
 			return err
@@ -486,8 +480,8 @@ func (r *run) indexOne(src source.Source, i int, fprint string) error {
 				}
 			}
 		}
-		if ts, ok := src.(TagStyler); ok {
-			if err := s.setTagColors(ts.TagStyles()); err != nil {
+		if ts, ok := src.(source.TagStyler); ok {
+			if err := s.setTagColors(srcID, ts.TagStyles()); err != nil {
 				return err
 			}
 		}

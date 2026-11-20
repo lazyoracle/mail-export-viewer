@@ -17,7 +17,7 @@ import (
 
 // schemaVersion is stored in PRAGMA user_version. A database with another
 // non-zero version is a stale cache and is rebuilt from scratch.
-const schemaVersion = 1
+const schemaVersion = 2
 
 // ErrNotRegular is returned by Open when the database or lock path is a
 // symlink or otherwise not a regular file.
@@ -84,13 +84,19 @@ CREATE INDEX IF NOT EXISTS messages_date ON messages(date_unix);
 CREATE INDEX IF NOT EXISTS messages_source ON messages(source_id);
 CREATE INDEX IF NOT EXISTS messages_message_id ON messages(message_id);
 CREATE INDEX IF NOT EXISTS messages_thread ON messages(thread_id);
+-- Tag colours per source (source.TagStyler), replaced on re-index.
+CREATE TABLE IF NOT EXISTS tag_colors (
+	source_id INTEGER NOT NULL,
+	name      TEXT NOT NULL,
+	color     TEXT NOT NULL,
+	PRIMARY KEY(source_id, name)
+) WITHOUT ROWID;
 -- Labels, categories and tags. Counts are rebuilt after indexing changes
 -- (see facets.go); count/unread exclude Deleted messages, *_all do not.
 CREATE TABLE IF NOT EXISTS terms (
 	id         INTEGER PRIMARY KEY,
 	kind       INTEGER NOT NULL,
 	name       TEXT NOT NULL,
-	color      TEXT NOT NULL DEFAULT '',
 	count      INTEGER NOT NULL DEFAULT 0,
 	unread     INTEGER NOT NULL DEFAULT 0,
 	count_all  INTEGER NOT NULL DEFAULT 0,
@@ -125,7 +131,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
 `
 
 var allTables = []string{"messages_fts", "messages", "sources", "folders", "terms", "message_terms",
-	"flag_counts", "props", "meta"}
+	"flag_counts", "props", "meta", "tag_colors"}
 
 // sortIndexSQL creates the indexes behind the sender and subject sort orders
 // (they must match the ORDER BY expressions in search.go). Maintaining them

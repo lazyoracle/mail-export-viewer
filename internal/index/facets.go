@@ -122,7 +122,11 @@ func (s *Store) Facets() (Facets, error) {
 	if s.opts.IncludeDeleted {
 		countCol, unreadCol = "count_all", "unread_all"
 	}
-	rows, err := s.rdb.Query(`SELECT kind, name, color, ` + countCol + `, ` + unreadCol + ` FROM terms WHERE ` +
+	colors, err := s.tagColors()
+	if err != nil {
+		return f, err
+	}
+	rows, err := s.rdb.Query(`SELECT kind, name, ` + countCol + `, ` + unreadCol + ` FROM terms WHERE ` +
 		countCol + ` > 0`)
 	if err != nil {
 		return f, err
@@ -131,17 +135,16 @@ func (s *Store) Facets() (Facets, error) {
 	for rows.Next() {
 		var kind int
 		var tc TermCount
-		if err := rows.Scan(&kind, &tc.Name, &tc.Color, &tc.Count, &tc.Unread); err != nil {
+		if err := rows.Scan(&kind, &tc.Name, &tc.Count, &tc.Unread); err != nil {
 			return f, err
 		}
 		switch kind {
 		case kindLabel:
-			tc.Color = ""
 			f.Labels = append(f.Labels, tc)
 		case kindCategory:
-			tc.Color = ""
 			f.Categories = append(f.Categories, tc)
 		case kindTag:
+			tc.Color = colors[tc.Name]
 			f.Tags = append(f.Tags, tc)
 		}
 	}
@@ -247,15 +250,16 @@ func (s *Store) folderTree() ([]FolderNode, error) {
 	return build(root), nil
 }
 
-// setTagColors records tag colours from a TagStyler.
-func (s *Store) setTagColors(styles []source.TagStyle) error {
-	for _, st := range styles {
+// setTagColors records the tag colours of source srcID (its earlier ones
+// were deleted with its rows).
+func (s *Store) setTagColors(srcID int64, styles []source.TagStyle) error {
+	for i, st := range styles {
 		name := names([]string{st.Name})
-		if len(name) == 0 || st.Color == "" {
+		if len(name) == 0 || st.Color == "" || i >= maxNames {
 			continue
 		}
-		if _, err := s.wdb.Exec(`INSERT INTO terms(kind, name, color) VALUES(?, ?, ?)
-			ON CONFLICT(kind, name) DO UPDATE SET color = excluded.color`, kindTag, name[0], clean(st.Color, 32)); err != nil {
+		if _, err := s.wdb.Exec(`INSERT INTO tag_colors(source_id, name, color) VALUES(?, ?, ?)
+			ON CONFLICT(source_id, name) DO UPDATE SET color = excluded.color`, srcID, name[0], clean(st.Color, 32)); err != nil {
 			return err
 		}
 	}
@@ -274,8 +278,7 @@ func (s *Store) rebuildFacetsIfDirty() error {
 
 // rebuildFacets recounts terms and flag_counts in one transaction, which
 // also clears the dirty marker (so an interrupted run never leaves stale
-// counts marked clean). Terms without messages are dropped unless they
-// carry a tag colour.
+// counts marked clean). Terms without messages are dropped.
 func (s *Store) rebuildFacets() error {
 	tx, err := s.wdb.Begin()
 	if err != nil {
@@ -293,7 +296,7 @@ func (s *Store) rebuildFacets() error {
 			FROM message_terms mt JOIN messages m ON m.id = mt.message_id GROUP BY mt.term_id)
 			UPDATE terms SET count = c.n, unread = c.u, count_all = c.n_all, unread_all = c.u_all
 			FROM c WHERE terms.id = c.id`, []any{unread, deleted, unread | deleted, unread}},
-		{`DELETE FROM terms WHERE count_all = 0 AND color = ''`, nil},
+		{`DELETE FROM terms WHERE count_all = 0`, nil},
 		{`DELETE FROM flag_counts`, nil},
 	}
 	for _, st := range stmts {

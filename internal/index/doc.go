@@ -27,7 +27,7 @@
 //     (source.Flags bits), labels/tags newline-joined (labels are
 //     categories for olm/pst sources), thread_id.
 //   - terms + message_terms: labels (kind 0), categories (1), tags (2)
-//     for filtering and counts; terms also carry tag colours. Counts (with
+//     for filtering and counts; tag_colors: colours per source and name. Counts (with
 //     and without Deleted messages) and flag_counts are recomputed after
 //     a run that changed messages (and every facetInterval during a long
 //     run), guarded by a dirty marker so an interrupted run heals.
@@ -63,10 +63,11 @@
 // range (Loc.Length > 0, i.e. mbox), else message counts.
 //
 // FolderLister folders are added after a successful Scan, so empty
-// folders appear in the tree. Tag colours come from the optional
-// TagStyler interface (defined here until package source grows one; the
-// mbox source does not implement it yet), called after Scan; the last
-// colour seen for a tag name wins.
+// folders appear in the tree. Tag colours come from source.TagStyler,
+// called after a successful Scan and stored per source (tag_colors), so
+// they are replaced when the source is re-indexed and dropped with it;
+// when sources disagree on a name, the one indexed first (lowest source
+// id) loses to later ones.
 //
 // # Deleted messages
 //

@@ -145,3 +145,39 @@ func TestFacetsEmpty(t *testing.T) {
 		t.Errorf("empty facets = %+v", f)
 	}
 }
+
+func TestTagColorsFollowSource(t *testing.T) {
+	s := openStore(t)
+	e := rawEntry("A", 1, "one")
+	e.Tags = []string{"Work"}
+	a := newFake(t, source.Mbox, "a", e)
+	a.styles = []source.TagStyle{{Name: "Work", Color: "#111111"}, {Name: "Unused", Color: "#222222"}}
+	b := newFake(t, source.Mbox, "b", e)
+	index(t, s, a, b)
+	if got := facets(t, s).Tags; !reflect.DeepEqual(got, []TermCount{{Name: "Work", Color: "#111111", Count: 2}}) {
+		t.Fatalf("tags = %+v", got)
+	}
+	if r := allRows(t, s); r[0].Tags[0].Color != "#111111" {
+		t.Errorf("row tags = %+v", r[0].Tags)
+	}
+	// The source drops the colour: re-indexing it forgets the colour.
+	a.styles = nil
+	touch(t, a.path)
+	index(t, s, a, b)
+	if got := facets(t, s).Tags; got[0].Color != "" {
+		t.Errorf("after re-index tags = %+v", got)
+	}
+	// A removed source takes its colours with it.
+	a.styles = []source.TagStyle{{Name: "Work", Color: "#333333"}}
+	touch(t, a.path)
+	index(t, s, a, b)
+	index(t, s, b)
+	if got := facets(t, s).Tags; len(got) != 1 || got[0].Color != "" {
+		t.Errorf("after removal tags = %+v", got)
+	}
+	var n int
+	s.rdb.QueryRow(`SELECT count(*) FROM tag_colors`).Scan(&n)
+	if n != 0 {
+		t.Errorf("tag_colors rows = %d", n)
+	}
+}

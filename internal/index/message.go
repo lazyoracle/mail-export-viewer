@@ -153,7 +153,8 @@ func (s *Store) decorate(in []scannedRow) ([]Row, error) {
 }
 
 func (s *Store) tagColors() (map[string]string, error) {
-	rows, err := s.rdb.Query(`SELECT name, color FROM terms WHERE kind = ? AND color <> ''`, kindTag)
+	// When sources disagree, the most recently added source wins.
+	rows, err := s.rdb.Query(`SELECT name, color FROM tag_colors ORDER BY source_id`)
 	if err != nil {
 		return nil, err
 	}
