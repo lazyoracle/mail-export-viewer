@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -11,13 +12,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/lazyoracle/mail-export-viewer/internal/index"
+	"github.com/lazyoracle/mail-export-viewer/internal/source"
 	"github.com/lazyoracle/mail-export-viewer/internal/testutil"
 )
 
@@ -55,6 +59,8 @@ func TestParseArgs(t *testing.T) {
 		{"bad addr", []string{"-addr", "nope", "in"}, 2, nil, "invalid -addr"},
 		{"remote refused", []string{"-addr", "0.0.0.0:8080", "in"}, 2, nil, "-allow-remote"},
 		{"localhost ok", []string{"-addr", "localhost:1", "in"}, -1, nil, ""},
+		{"LOCALHOST ok", []string{"-addr", "LOCALHOST:1", "in"}, -1, nil, ""},
+		{"double dash", []string{"-no-open", "--", "-weird"}, -1, func(c config) bool { return c.input == "-weird" && c.noOpen }, ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -164,7 +170,14 @@ func TestListenFallback(t *testing.T) {
 	}
 	l, err := listen(addr, false, false)
 	if err != nil {
-		t.Fatal(err)
+		// Acceptable only if every fallback port is really taken.
+		for p := port + 1; p <= port+fallbackPorts; p++ {
+			if x, e := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(p))); e == nil {
+				x.Close()
+				t.Fatalf("free port %d was not used: %v", p, err)
+			}
+		}
+		t.Skip("all fallback ports busy")
 	}
 	defer l.Close()
 	got := l.Addr().(*net.TCPAddr).Port
@@ -296,43 +309,14 @@ func TestRunInProcess(t *testing.T) {
 }
 
 func TestSubprocessSmoke(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip()
+	if testing.Short() || runtime.GOOS == "windows" {
+		t.Skip("builds the binary")
 	}
 	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "mev")
-	build := exec.Command(goBin(), "build", "-o", bin, ".")
-	build.Env = append(os.Environ(), "CGO_ENABLED=0")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v\n%s", err, out)
-	}
+	bin := buildBinary(t, tmp)
 	dir := testutil.MixedDir(t)
-	cache := filepath.Join(tmp, "cache")
-	// Find a free port to pass explicitly.
-	l, _ := net.Listen("tcp", "127.0.0.1:0")
-	addr := l.Addr().String()
-	l.Close()
-	cmd := exec.Command(bin, "-no-open", "-addr", addr, "-cache-dir", cache, dir)
-	var errb syncBuffer
-	cmd.Stderr = &errb
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	exited := make(chan error, 1)
-	go func() { exited <- cmd.Wait() }()
-	defer cmd.Process.Kill()
-	base := "http://" + addr
-	deadline := time.Now().Add(30 * time.Second)
-	for {
-		if resp, err := http.Get(base + "/api/status"); err == nil {
-			resp.Body.Close()
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("server did not come up: %s", errb.String())
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+	cmd, errb, exited := startBinary(t, bin, "-no-open", "-addr", "127.0.0.1:0", "-cache-dir", filepath.Join(tmp, "cache"), dir)
+	base := waitURL(t, errb, exited)
 	waitFinished(t, base)
 	var msgs struct{ Items []struct{ Subject string } }
 	getJSON(t, base+"/api/messages", &msgs)
@@ -348,9 +332,76 @@ func TestSubprocessSmoke(t *testing.T) {
 	case <-time.After(20 * time.Second):
 		t.Fatal("no exit after SIGINT")
 	}
-	if _, err := os.Stat(cache); err != nil {
-		t.Fatal("cache dir missing")
+}
+
+func TestSubprocessDoubleSIGINT(t *testing.T) {
+	if testing.Short() || runtime.GOOS == "windows" {
+		t.Skip("builds the binary")
 	}
+	tmp := t.TempDir()
+	bin := buildBinary(t, tmp)
+	big := filepath.Join(tmp, "big.mbox")
+	var msgs []string
+	body := strings.Repeat("lorem ipsum dolor sit amet\n", 200)
+	for i := 0; i < 20000; i++ {
+		msgs = append(msgs, fmt.Sprintf("From: A <a@example.com>\nSubject: m%d\nDate: Mon, 2 Jan 2023 10:00:00 +0000\nMessage-ID: <%d@x>\n\n%s", i, i, body))
+	}
+	testutil.WriteMbox(t, big, msgs...)
+	cmd, errb, exited := startBinary(t, bin, "-no-open", "-addr", "127.0.0.1:0", "-cache-dir", filepath.Join(tmp, "cache"), big)
+	waitURL(t, errb, exited)
+	cmd.Process.Signal(syscall.SIGINT)
+	time.Sleep(50 * time.Millisecond)
+	cmd.Process.Signal(syscall.SIGINT)
+	select {
+	case <-exited:
+	case <-time.After(15 * time.Second):
+		t.Fatalf("no prompt exit after two SIGINTs:\n%s", errb.String())
+	}
+}
+
+func buildBinary(t *testing.T, tmp string) string {
+	t.Helper()
+	bin := filepath.Join(tmp, "mev")
+	build := exec.Command(goBin(), "build", "-o", bin, ".")
+	build.Env = append(os.Environ(), "CGO_ENABLED=0")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+	return bin
+}
+
+func startBinary(t *testing.T, bin string, args ...string) (*exec.Cmd, *syncBuffer, chan error) {
+	t.Helper()
+	cmd := exec.Command(bin, args...)
+	errb := &syncBuffer{}
+	cmd.Stderr = errb
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+	t.Cleanup(func() { cmd.Process.Kill() })
+	return cmd, errb, exited
+}
+
+var urlRe = regexp.MustCompile(`http://[^\s/]+`)
+
+// waitURL parses the URL the child printed (it bound port 0 itself).
+func waitURL(t *testing.T, errb *syncBuffer, exited chan error) string {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if u := urlRe.FindString(errb.String()); u != "" {
+			return u
+		}
+		select {
+		case err := <-exited:
+			t.Fatalf("exited early: %v\n%s", err, errb.String())
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	t.Fatalf("no URL printed:\n%s", errb.String())
+	return ""
 }
 
 func goBin() string {
@@ -359,4 +410,201 @@ func goBin() string {
 		return p
 	}
 	return "go"
+}
+
+func TestCleanControlChars(t *testing.T) {
+	got := clean("a\x1b[31mb\nc\x00d\u202ee\tf é")
+	for _, r := range got {
+		if r < 0x20 || r == 0x7f || r == 0x202e {
+			t.Fatalf("control rune %q left in %q", r, got)
+		}
+	}
+	if !strings.Contains(got, "é") || !strings.Contains(got, "a") {
+		t.Fatalf("printable text lost: %q", got)
+	}
+}
+
+func TestErrorOutputSanitised(t *testing.T) {
+	var errb bytes.Buffer
+	bad := filepath.Join(t.TempDir(), "no\x1b[31m\nforged: line")
+	code := run([]string{"-no-open", "-cache-dir", t.TempDir(), bad}, io.Discard, &errb)
+	if code != 2 {
+		t.Fatalf("code %d", code)
+	}
+	if strings.ContainsRune(errb.String(), 0x1b) || strings.Count(errb.String(), "\n") != 1 {
+		t.Fatalf("unsanitised output %q", errb.String())
+	}
+	// Unsupported file with a hostile name.
+	junk := filepath.Join(t.TempDir(), "j\x1b]0;x\x07.txt")
+	os.WriteFile(junk, []byte("text\n"), 0o644)
+	errb.Reset()
+	run([]string{"-no-open", "-cache-dir", t.TempDir(), junk}, io.Discard, &errb)
+	if strings.ContainsRune(errb.String(), 0x1b) || strings.ContainsRune(errb.String(), 7) {
+		t.Fatalf("unsanitised output %q", errb.String())
+	}
+}
+
+func TestCachePathCanonical(t *testing.T) {
+	dir := testutil.MixedDir(t)
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Skip(err)
+	}
+	cache := t.TempDir()
+	a, err := cachePathFor(cache, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := cachePathFor(cache, link)
+	if a != b {
+		t.Fatalf("symlinked input got another cache: %s vs %s", a, b)
+	}
+	if c, err := cachePathFor(cache, filepath.Join(dir, "missing")); err != nil || c == "" {
+		t.Fatalf("fallback: %q %v", c, err)
+	}
+}
+
+func TestSymlinkedInputSharesLock(t *testing.T) {
+	dir := testutil.MixedDir(t)
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Skip(err)
+	}
+	cache := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	addr := make(chan string, 1)
+	done := make(chan int, 1)
+	go func() {
+		done <- runCtx(ctx, []string{"-no-open", "-addr", "127.0.0.1:0", "-cache-dir", cache, dir}, io.Discard, io.Discard, hooks{ready: func(a string) { addr <- a }})
+	}()
+	select {
+	case <-addr:
+	case <-time.After(20 * time.Second):
+		t.Fatal("no ready")
+	}
+	var e bytes.Buffer
+	if code := run([]string{"-no-open", "-addr", "127.0.0.1:0", "-cache-dir", cache, link}, io.Discard, &e); code != 1 || !strings.Contains(e.String(), "already running") {
+		t.Fatalf("via symlink: %d %s", code, e.String())
+	}
+	cancel()
+	<-done
+}
+
+func TestListenHostnameFallback(t *testing.T) {
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer busy.Close()
+	port := busy.Addr().(*net.TCPAddr).Port
+	l, err := listen("localhost:"+strconv.Itoa(port), false, false)
+	if err != nil {
+		t.Skipf("localhost fallback unavailable here: %v", err)
+	}
+	defer l.Close()
+	if l.Addr().(*net.TCPAddr).Port == port {
+		t.Fatal("bound the busy port")
+	}
+}
+
+func startInProcess(t *testing.T, h hooks, args ...string) (base string, stop func() int, errb *syncBuffer) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	addr := make(chan string, 1)
+	done := make(chan int, 1)
+	errb = &syncBuffer{}
+	h.ready = func(a string) { addr <- a }
+	go func() { done <- runCtx(ctx, args, io.Discard, errb, h) }()
+	select {
+	case a := <-addr:
+		base = "http://" + a
+	case code := <-done:
+		cancel()
+		t.Fatalf("exited early %d: %s", code, errb.String())
+	case <-time.After(20 * time.Second):
+		cancel()
+		t.Fatal("no ready")
+	}
+	return base, func() int {
+		cancel()
+		select {
+		case c := <-done:
+			return c
+		case <-time.After(30 * time.Second):
+			t.Fatal("no shutdown")
+			return -1
+		}
+	}, errb
+}
+
+func hostStatus(t *testing.T, base, host string) int {
+	t.Helper()
+	req, _ := http.NewRequest("GET", base+"/api/status", nil)
+	req.Host = host
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	return resp.StatusCode
+}
+
+func TestAllowedHostEndToEnd(t *testing.T) {
+	dir := testutil.MixedDir(t)
+	base, stop, _ := startInProcess(t, hooks{}, "-no-open", "-allow-remote", "-allowed-host", "viewer.test",
+		"-addr", "127.0.0.1:0", "-cache-dir", t.TempDir(), dir)
+	if c := hostStatus(t, base, "viewer.test"); c != 200 {
+		t.Errorf("allowed host: %d", c)
+	}
+	if c := hostStatus(t, base, "evil.test"); c != 403 {
+		t.Errorf("other host: %d", c)
+	}
+	if c := stop(); c != 0 {
+		t.Errorf("exit %d", c)
+	}
+	// Without -allowed-host the name is refused.
+	base, stop, _ = startInProcess(t, hooks{}, "-no-open", "-addr", "127.0.0.1:0", "-cache-dir", t.TempDir(), dir)
+	if c := hostStatus(t, base, "viewer.test"); c != 403 {
+		t.Errorf("unlisted host: %d", c)
+	}
+	stop()
+}
+
+func TestShutdownWaitBounded(t *testing.T) {
+	dir := testutil.MixedDir(t)
+	old := shutdownWait
+	shutdownWait = 300 * time.Millisecond
+	defer func() { shutdownWait = old }()
+	release := make(chan struct{})
+	defer close(release)
+	h := hooks{index: func(ctx context.Context, st *index.Store, srcs []source.Source) error {
+		<-release // ignores ctx: a stuck indexer
+		return nil
+	}}
+	_, stop, errb := startInProcess(t, h, "-no-open", "-addr", "127.0.0.1:0", "-cache-dir", t.TempDir(), dir)
+	start := time.Now()
+	code := stop()
+	if time.Since(start) > 5*time.Second {
+		t.Fatalf("shutdown took %v", time.Since(start))
+	}
+	if code != 1 || !strings.Contains(errb.String(), "did not stop") {
+		t.Fatalf("code %d: %s", code, errb.String())
+	}
+}
+
+func TestIndexFailureReported(t *testing.T) {
+	dir := testutil.MixedDir(t)
+	h := hooks{index: func(ctx context.Context, st *index.Store, srcs []source.Source) error {
+		return errors.New("disk on fire")
+	}}
+	base, stop, errb := startInProcess(t, h, "-no-open", "-addr", "127.0.0.1:0", "-cache-dir", t.TempDir(), dir)
+	_ = base
+	time.Sleep(200 * time.Millisecond)
+	if code := stop(); code != 1 {
+		t.Fatalf("exit %d, want 1", code)
+	}
+	if !strings.Contains(errb.String(), "indexing failed: disk on fire") {
+		t.Fatalf("stderr: %s", errb.String())
+	}
 }

@@ -17,6 +17,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/lazyoracle/mail-export-viewer/internal/index"
 	"github.com/lazyoracle/mail-export-viewer/internal/server"
@@ -52,6 +54,7 @@ type config struct {
 // hooks are test seams.
 type hooks struct {
 	ready func(addr string) // called with the bound address once serving
+	index func(ctx context.Context, st *index.Store, srcs []source.Source) error
 }
 
 // usageError is a problem with the command line or the input (exit 2).
@@ -72,6 +75,9 @@ func (l *stringList) Set(v string) error { *l = append(*l, v); return nil }
 func run(args []string, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// After the first signal restore the default handler, so a second
+	// Ctrl-C kills the process even if shutdown is slow.
+	go func() { <-ctx.Done(); stop() }()
 	return runCtx(ctx, args, stdout, stderr, hooks{})
 }
 
@@ -81,7 +87,7 @@ func runCtx(ctx context.Context, args []string, stdout, stderr io.Writer, h hook
 		return code
 	}
 	if err := serve(ctx, cfg, stderr, h); err != nil {
-		fmt.Fprintf(stderr, "%s: %v\n", prog, err)
+		fmt.Fprintf(stderr, "%s: %s\n", prog, clean(err.Error()))
 		var ue *usageError
 		if errors.As(err, &ue) {
 			return 2
@@ -177,7 +183,7 @@ func isLoopbackAddr(addr string) bool {
 	if err != nil {
 		return false
 	}
-	if host == "localhost" {
+	if strings.EqualFold(host, "localhost") {
 		return true
 	}
 	ip := net.ParseIP(host)
@@ -239,7 +245,7 @@ func openSources(input string, stderr io.Writer) ([]source.Source, error) {
 		return nil, usageErrf("cannot read %s: %v", input, err)
 	}
 	for _, w := range d.Warnings {
-		fmt.Fprintf(stderr, "%s: warning: %s\n", prog, w)
+		fmt.Fprintf(stderr, "%s: warning: %s\n", prog, clean(w))
 	}
 	if len(d.Candidates) == 0 {
 		return nil, unsupported()
@@ -248,7 +254,7 @@ func openSources(input string, stderr io.Writer) ([]source.Source, error) {
 	for _, c := range d.Candidates {
 		s, err := c.Open()
 		if err != nil {
-			fmt.Fprintf(stderr, "%s: warning: skipping %s: %v\n", prog, c.Path, err)
+			fmt.Fprintf(stderr, "%s: warning: skipping %s: %v\n", prog, clean(c.Path), clean(err.Error()))
 			continue
 		}
 		srcs = append(srcs, s)
@@ -276,10 +282,11 @@ func serve(ctx context.Context, cfg config, stderr io.Writer, h hooks) error {
 	if err != nil {
 		return err
 	}
+	// Needed before index.Open: the instance lock lives next to the index.
 	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
 		return fmt.Errorf("cannot create cache directory: %w", err)
 	}
-	db, err := index.CachePath(cacheDir, cfg.input)
+	db, err := cachePathFor(cacheDir, cfg.input)
 	if err != nil {
 		return err
 	}
@@ -345,16 +352,24 @@ func serve(ctx context.Context, cfg config, stderr io.Writer, h hooks) error {
 	}
 
 	start := time.Now()
+	indexFn := h.index
+	if indexFn == nil {
+		indexFn = func(ctx context.Context, st *index.Store, srcs []source.Source) error {
+			return st.IndexSources(ctx, srcs, nil)
+		}
+	}
 	idxCtx, cancelIdx := context.WithCancel(ctx)
 	idxDone := make(chan struct{})
+	var idxErr error // written before idxDone closes
 	go func() {
 		defer close(idxDone)
-		err := st.IndexSources(idxCtx, srcs, nil)
+		err := indexFn(idxCtx, st, srcs)
 		switch {
 		case err == nil:
 			fmt.Fprintf(stderr, "%s: %s\n", prog, summary(st.Status(), time.Since(start)))
 		case idxCtx.Err() == nil:
-			fmt.Fprintf(stderr, "%s: indexing failed: %v\n", prog, err)
+			idxErr = err
+			fmt.Fprintf(stderr, "%s: indexing failed: %s\n", prog, clean(err.Error()))
 		}
 	}()
 
@@ -364,13 +379,25 @@ func serve(ctx context.Context, cfg config, stderr io.Writer, h hooks) error {
 	case err := <-srvErr:
 		result = fmt.Errorf("server: %w", err)
 	}
+	// Shutdown order: cancel indexing first (so it stops writing), then
+	// stop the HTTP server, then wait for the indexer (bounded), and only
+	// then close the store (deferred) and release the lock.
 	cancelIdx()
 	sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := httpSrv.Shutdown(sctx); err != nil {
 		httpSrv.Close()
 	}
-	<-idxDone
+	select {
+	case <-idxDone:
+		if result == nil && idxErr != nil {
+			result = fmt.Errorf("indexing failed: %w", idxErr) // exit code 1
+		}
+	case <-time.After(shutdownWait):
+		if result == nil {
+			result = fmt.Errorf("indexing did not stop within %s; exiting anyway", shutdownWait)
+		}
+	}
 	return result
 }
 
@@ -412,4 +439,43 @@ func openBrowser(url string) {
 	if err := c.Start(); err == nil {
 		go func() { _ = c.Wait() }()
 	}
+}
+
+// shutdownWait bounds how long shutdown waits for a stuck indexer.
+var shutdownWait = 10 * time.Second
+
+// clean makes an untrusted string (file names, warnings, error texts that
+// embed them) safe for a terminal and for line-oriented logs: control and
+// format characters (escape sequences, newlines, bidi overrides) become
+// \xNN / \uNNNN escapes.
+func clean(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r == utf8.RuneError || unicode.IsControl(r) || unicode.Is(unicode.Cf, r):
+			if r < 0x100 {
+				fmt.Fprintf(&b, "\\x%02x", r)
+			} else {
+				fmt.Fprintf(&b, "\\u%04x", r)
+			}
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// cachePathFor names the index for input after its symlink-resolved
+// absolute path, so one input reached through different links shares one
+// cache and one lock; it falls back to the plain absolute path when the
+// path cannot be resolved.
+func cachePathFor(dir, input string) (string, error) {
+	abs, err := filepath.Abs(input)
+	if err != nil {
+		return "", err
+	}
+	if real, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = real
+	}
+	return index.CachePath(dir, abs)
 }
