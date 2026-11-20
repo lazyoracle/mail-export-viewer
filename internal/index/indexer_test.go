@@ -533,3 +533,31 @@ func TestLargeSummariesDoNotDeadlock(t *testing.T) {
 		t.Errorf("rows = %d", n)
 	}
 }
+
+func TestPanickingSourceDoesNotCrash(t *testing.T) {
+	s := openStore(t)
+	bad := newFake(t, source.Mbox, "bad", rawEntry("A", 1, "one"), rawEntry("A", 2, "two"))
+	bad.panicAt = 2
+	meta := newFake(t, source.OLM, "meta.olm", msgEntry("M", 1, "meta"))
+	meta.panicMeta = true
+	good := newFake(t, source.Mbox, "good", rawEntry("G", 3, "three"))
+	p := index(t, s, bad, meta, good)
+	if sp := p.Sources[0]; sp.State != StateFailed || !strings.Contains(sp.Error, "scan boom") || sp.Messages != 1 {
+		t.Errorf("panicking Scan: %+v", sp)
+	}
+	if sp := p.Sources[1]; sp.State != StateDone || sp.Warnings < 2 || sp.Messages != 1 {
+		t.Errorf("panicking Folders/TagStyles/Inputs: %+v", sp)
+	}
+	if sp := p.Sources[2]; sp.State != StateDone || sp.Messages != 1 {
+		t.Errorf("good source: %+v", sp)
+	}
+	si := sourceByPath(t, s, meta.path)
+	if !strings.Contains(strings.Join(si.Warnings, "|"), "folders boom") {
+		t.Errorf("warnings = %q", si.Warnings)
+	}
+	// A source whose Inputs panic cannot be fingerprinted: never reused.
+	index(t, s, bad, meta, good)
+	if meta.scans.Load() != 2 || good.scans.Load() != 1 || bad.scans.Load() != 2 {
+		t.Errorf("scans bad=%d meta=%d good=%d", bad.scans.Load(), meta.scans.Load(), good.scans.Load())
+	}
+}

@@ -26,6 +26,8 @@ type fakeSrc struct {
 	block      chan struct{} // when set, Scan waits for it (or ctx) before each entry
 	folders    []string
 	styles     []source.TagStyle
+	panicAt    int  // Scan panics before entry panicAt-1 (0 = never)
+	panicMeta  bool // Folders, TagStyles and Inputs panic
 	scans      atomic.Int32
 }
 
@@ -38,14 +40,27 @@ func newFake(t testing.TB, kind, name string, entries ...source.Entry) *fakeSrc 
 	return &fakeSrc{kind: kind, path: path, inputs: []string{path}, entries: entries}
 }
 
-func (f *fakeSrc) Kind() string     { return f.kind }
-func (f *fakeSrc) Path() string     { return f.path }
-func (f *fakeSrc) Inputs() []string { return f.inputs }
-func (f *fakeSrc) Close() error     { return nil }
+func (f *fakeSrc) Kind() string { return f.kind }
+func (f *fakeSrc) Path() string { return f.path }
+func (f *fakeSrc) Inputs() []string {
+	if f.panicMeta {
+		panic("inputs boom")
+	}
+	return f.inputs
+}
+func (f *fakeSrc) Close() error { return nil }
 func (f *fakeSrc) Folders() []string {
+	if f.panicMeta {
+		panic("folders boom")
+	}
 	return f.folders
 }
-func (f *fakeSrc) TagStyles() []source.TagStyle { return f.styles }
+func (f *fakeSrc) TagStyles() []source.TagStyle {
+	if f.panicMeta {
+		panic("styles boom")
+	}
+	return f.styles
+}
 
 func (f *fakeSrc) Scan(ctx context.Context, emit func(source.Entry) error, warn func(error)) error {
 	f.scans.Add(1)
@@ -53,6 +68,9 @@ func (f *fakeSrc) Scan(ctx context.Context, emit func(source.Entry) error, warn 
 		warn(w)
 	}
 	for i, e := range f.entries {
+		if f.panicAt > 0 && i == f.panicAt-1 {
+			panic("scan boom")
+		}
 		if f.scanErr != nil && f.failAfter > 0 && i == f.failAfter {
 			return f.scanErr
 		}

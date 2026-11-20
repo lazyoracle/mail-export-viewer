@@ -79,6 +79,7 @@ func (s *Store) IndexSources(ctx context.Context, srcs []source.Source, onProgre
 		src    source.Source
 		i      int
 		fprint string
+		fpErr  error
 	}
 	var work []workItem
 	keep := map[string]bool{}
@@ -91,12 +92,12 @@ func (s *Store) IndexSources(ctx context.Context, srcs []source.Source, onProgre
 		}
 		keep[path] = true
 		sp := SourceProgress{Path: path, Kind: src.Kind(), Unit: UnitMessages}
-		fp := fingerprint(src)
-		if st, ok := existing[path]; ok && st.fprint == fp && st.kind == src.Kind() {
+		fp, fpErr := fingerprint(src)
+		if st, ok := existing[path]; ok && fp != "" && st.fprint == fp && st.kind == src.Kind() {
 			sp.State = StateCached
 		} else {
 			sp.State = StateQueued
-			work = append(work, workItem{src, len(prog.Sources), fp})
+			work = append(work, workItem{src, len(prog.Sources), fp, fpErr})
 		}
 		prog.Sources = append(prog.Sources, sp)
 	}
@@ -122,7 +123,7 @@ func (s *Store) IndexSources(ctx context.Context, srcs []source.Source, onProgre
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := r.indexOne(w.src, w.i, w.fprint); err != nil {
+		if err := r.indexOne(w.src, w.i, w.fprint, w.fpErr); err != nil {
 			return err
 		}
 		// Keep label/tag counts roughly current during a long first run.
@@ -186,8 +187,15 @@ func (r *run) finish(err error) {
 }
 
 // fingerprint hashes the sorted input paths of src with each one's size
-// and mtime (a missing input counts as size -1), plus the source path.
-func fingerprint(src source.Source) string {
+// and mtime (a missing input counts as size -1), plus the source path. A
+// panicking Inputs gives "" (never matches: the source is always
+// re-scanned) and the panic as error.
+func fingerprint(src source.Source) (fp string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			fp, err = "", fmt.Errorf("%s: Inputs panic: %v", src.Path(), r)
+		}
+	}()
 	paths := slices.Clone(src.Inputs())
 	if len(paths) == 0 {
 		paths = []string{src.Path()}
@@ -203,7 +211,17 @@ func fingerprint(src source.Source) string {
 		}
 		fmt.Fprintf(h, "%s\x00%d\x00%d\x00", p, size, mtime)
 	}
-	return hex.EncodeToString(h.Sum(nil))
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// safely runs f, turning a panic into an error.
+func safely(what string, f func() error) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%s panic: %v", what, r)
+		}
+	}()
+	return f()
 }
 
 func (s *Store) loadSources() (map[string]sourceState, error) {
@@ -352,7 +370,7 @@ type result struct {
 
 // indexOne (re)indexes one source (progress slot i). Source problems go to
 // the source's state; only database errors and cancellation are returned.
-func (r *run) indexOne(src source.Source, i int, fprint string) error {
+func (r *run) indexOne(src source.Source, i int, fprint string, fpErr error) error {
 	s := r.s
 	path := src.Path()
 	srcID, err := s.resetSource(path, src.Kind())
@@ -373,12 +391,14 @@ func (r *run) indexOne(src source.Source, i int, fprint string) error {
 	results := make(chan result, 2*runtime.NumCPU())
 	var warns warnings
 
-	// Reader: Scan, bounded by the byte budget.
+	// Reader: Scan, bounded by the byte budget. A panicking Scan fails
+	// the source (what was emitted stays).
+	warns.add(fpErr)
 	var scanErr error
 	go func() {
 		defer close(jobs)
 		seq := 0
-		scanErr = src.Scan(ctx, func(e source.Entry) error {
+		emit := func(e source.Entry) error {
 			units := entryUnits(&e)
 			for range units {
 				select {
@@ -394,7 +414,8 @@ func (r *run) indexOne(src source.Source, i int, fprint string) error {
 			case <-ctx.Done():
 				return ctx.Err()
 			}
-		}, warns.add)
+		}
+		scanErr = safely("Scan", func() error { return src.Scan(ctx, emit, warns.add) })
 	}()
 
 	// Summarising workers.
@@ -505,15 +526,20 @@ func (r *run) indexOne(src source.Source, i int, fprint string) error {
 		unit = UnitMessages
 	}
 	if scanErr == nil {
+		// Optional interfaces: a panic there is a warning, not a failure.
 		if fl, ok := src.(source.FolderLister); ok {
-			for _, f := range fl.Folders() {
+			var folders []string
+			warns.add(safely("Folders", func() error { folders = fl.Folders(); return nil }))
+			for _, f := range folders {
 				if _, err := w.folder(cleanFolder(f, name)); err != nil {
 					return err
 				}
 			}
 		}
 		if ts, ok := src.(source.TagStyler); ok {
-			if err := s.setTagColors(srcID, ts.TagStyles()); err != nil {
+			var styles []source.TagStyle
+			warns.add(safely("TagStyles", func() error { styles = ts.TagStyles(); return nil }))
+			if err := s.setTagColors(srcID, styles); err != nil {
 				return err
 			}
 		}
