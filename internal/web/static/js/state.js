@@ -4,7 +4,7 @@
 /** Message list state. total is the first page's count (later pages say -1;
  * a first page may too, meaning "not counted"). */
 export function emptyList() {
-  return { items: [], total: null, cursor: '', done: false, loading: false, error: null };
+  return { items: [], ids: new Set(), total: null, cursor: '', done: false, loading: false, error: null };
 }
 
 export function startLoading(list) {
@@ -13,13 +13,20 @@ export function startLoading(list) {
 
 export function applyPage(list, page) {
   const first = list.items.length === 0 && !list.cursor;
-  const seen = new Set(list.items.map((i) => i.id));
-  const items = list.items.concat((page.items || []).filter((i) => !seen.has(i.id)));
+  // The item array and id set grow in place (a list state is replaced, never
+  // reused), so loading page after page stays linear.
+  const ids = list.ids || new Set(list.items.map((i) => i.id));
+  const items = list.items;
+  for (const it of page.items || []) {
+    if (ids.has(it.id)) continue;
+    ids.add(it.id);
+    items.push(it);
+  }
   let total = list.total;
   const cursor = page.nextCursor || '';
   // -1: the server did not count; exact only if this is the last page.
   if (first) total = page.total >= 0 ? page.total : (cursor ? -1 : items.length);
-  return { items, total, cursor, done: !cursor, loading: false, error: null };
+  return { items, ids, total, cursor, done: !cursor, loading: false, error: null };
 }
 
 export function failPage(list, err) {

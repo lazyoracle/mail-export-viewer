@@ -40,18 +40,31 @@ export function highlightSegments(html) {
 
 const LINK = /\b(?:https?:\/\/[^\s<>"'`]+|mailto:[^\s<>"'`]+)/gi;
 const SAFE_PROTOCOLS = new Set(['https:', 'http:', 'mailto:']);
-const TRAILING = /[.,;:!?'"*_\]}>]$/;
+const TRAILING = new Set(['.', ',', ';', ':', '!', '?', "'", '"', '*', '_', ']', '}', '>']);
 
+/** Longer "URLs" stay plain text (and keep the trimming below bounded). */
+export const MAX_LINK = 2048;
+
+/**
+ * Drops trailing punctuation, and closing parens that have no opening
+ * partner, from a URL candidate. Linear: the parens are counted once and
+ * the end moves back by index.
+ */
 function trimLink(s) {
-  for (;;) {
-    if (TRAILING.test(s)) { s = s.slice(0, -1); continue; }
-    if (s.endsWith(')')) {
-      const open = (s.match(/\(/g) || []).length;
-      const close = (s.match(/\)/g) || []).length;
-      if (close > open) { s = s.slice(0, -1); continue; }
-    }
-    return s;
+  let open = 0;
+  let close = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '(') open++;
+    else if (s[i] === ')') close++;
   }
+  let end = s.length;
+  while (end > 0) {
+    const c = s[end - 1];
+    if (TRAILING.has(c)) { end--; continue; }
+    if (c === ')' && close > open) { end--; close--; continue; }
+    break;
+  }
+  return s.slice(0, end);
 }
 
 function safeHref(s) {
@@ -78,6 +91,7 @@ export function linkify(text) {
     else out.push({ text: t });
   };
   for (const m of s.matchAll(LINK)) {
+    if (m[0].length > MAX_LINK) continue;
     const raw = trimLink(m[0]);
     const href = safeHref(raw);
     if (!href) continue;

@@ -139,3 +139,15 @@ test('applyPage: an unknown first-page total stays unknown unless that was the l
   const l = applyPage(startLoading(emptyList()), { items: [{ id: 1 }], total: -1, nextCursor: 'c' });
   assert.equal(l.total, -1);
 });
+
+test('applyPage stays linear over many pages', () => {
+  let l = emptyList();
+  const t = performance.now();
+  for (let p = 0; p < 2000; p++) {
+    const items = Array.from({ length: 50 }, (_, i) => ({ id: p * 50 + i + 1 }));
+    l = applyPage(startLoading(l), { items, total: p ? -1 : 100000, nextCursor: p < 1999 ? `c${p}` : '' });
+  }
+  assert.equal(l.items.length, 100000);
+  assert.equal(l.total, 100000);
+  assert.ok(performance.now() - t < 1500, `took ${performance.now() - t} ms`);
+});

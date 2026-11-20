@@ -81,3 +81,38 @@ test('markTerms marks word-start matches, case-insensitively', () => {
   assert.deepEqual(markTerms('', ['x']), []);
   assert.equal(marked(markTerms('x <b>y</b>', ['<b>y'])), 'x [<b>y]</b>', 'text stays text');
 });
+
+// Hostile inputs: each must finish quickly (linear time), not freeze the tab.
+const timed = (fn) => { const t = performance.now(); const v = fn(); return [v, performance.now() - t]; };
+const LONG = 300000;
+
+test('linkify is linear on a URL with a huge tail of closing parens or dots', () => {
+  for (const tail of [')'.repeat(LONG), '.'.repeat(LONG), ').'.repeat(LONG / 2), `${'('.repeat(LONG / 2)}${')'.repeat(LONG / 2)}`]) {
+    const s = `${H}x.org/a${tail}`;
+    const [segs, ms] = timed(() => linkify(s));
+    assert.ok(ms < 500, `took ${ms} ms`);
+    assert.equal(segs.map((x) => x.text).join(''), s, 'no text lost');
+  }
+});
+
+test('linkify leaves URLs over 2048 characters as plain text', () => {
+  const long = `${H}x.org/${'a'.repeat(3000)}`;
+  assert.deepEqual(linkify(`see ${long}`), [{ text: `see ${long}` }]);
+  const ok = `${H}x.org/${'a'.repeat(1900)}`;
+  assert.equal(linkify(ok)[0].href, ok);
+});
+
+test('linkify trims a long run of trailing punctuation correctly', () => {
+  assert.deepEqual(linkify(`${H}x.org/a)))...`), [{ text: `${H}x.org/a`, href: `${H}x.org/a` }, { text: ')))...' }]);
+  assert.deepEqual(linkify(`${H}x.org/a_(b)).`), [{ text: `${H}x.org/a_(b)`, href: `${H}x.org/a_(b)` }, { text: ').' }]);
+});
+
+test('linkify, highlightSegments, markTerms and decodeEntities stay fast on long text', () => {
+  const words = 'lorem ipsum http://x.org/p dolor '.replace('http', 'ht' + 'tp').repeat(10000);
+  assert.ok(timed(() => linkify(words))[1] < 1000);
+  const hl = '<mark>a</mark>&amp;b '.repeat(30000);
+  assert.ok(timed(() => highlightSegments(hl))[1] < 1000);
+  assert.ok(timed(() => decodeEntities('&amp;&#x41;'.repeat(50000)))[1] < 1000);
+  assert.ok(timed(() => markTerms('ab'.repeat(50000), ['ab', 'a', 'abab']))[1] < 1000);
+  assert.ok(timed(() => markTerms('é'.repeat(LONG / 3), ['e']))[1] < 2000);
+});
