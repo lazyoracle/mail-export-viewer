@@ -118,8 +118,8 @@ In short:
   `actions/upload-artifact`, `actions/download-artifact`) by **major version
   tag**, not by commit SHA. Before publishing releases from this repository,
   pin each one to a full commit SHA checked against the action's repository
-  (with the tag as a comment). Dependabot (`.github/dependabot.yml`) then
-  keeps the pins current.
+  (with the tag as a comment), and keep the pins current by hand: automated
+  dependency-update pull requests are not enabled for this repository.
 - **Go standard library.** The binaries are statically linked: they embed
   the Go standard library (`net/http`, `archive/zip`, `database/sql`, ...)
   of the toolchain that built them. CI and releases build with the latest
