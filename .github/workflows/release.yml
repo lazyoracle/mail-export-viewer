@@ -28,7 +28,7 @@ jobs:
             exit 1
           fi
       # TODO(supply chain): pin third-party actions to full commit SHAs (see SECURITY.md).
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
